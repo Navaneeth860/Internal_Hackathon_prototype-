@@ -5,20 +5,31 @@ interface ConfidenceBadgeProps {
 }
 
 export const ConfidenceBadge: React.FC<ConfidenceBadgeProps> = ({ score }) => {
-  // Multiply by 100 since confidence values are floats [0.0, 1.0]
   const percentage = Math.round(score * 100);
   
-  let colorClass = "bg-red-50 text-red-700 border-red-200";
+  let colorBg = "bg-rose-500";
+  let colorText = "text-rose-700";
+  
   if (score >= 0.85) {
-    colorClass = "bg-green-50 text-green-700 border-green-200";
+    colorBg = "bg-emerald-500";
+    colorText = "text-emerald-700";
   } else if (score >= 0.70) {
-    colorClass = "bg-amber-50 text-amber-700 border-amber-200";
+    colorBg = "bg-amber-500";
+    colorText = "text-amber-700";
   }
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold border ${colorClass}`}>
-      {percentage}% Heuristic
-    </span>
+    <div className="w-full mt-2">
+      <div className="flex justify-between items-center text-[11px] text-slate-500 font-semibold mb-1">
+        <span>Heuristic Confidence</span>
+        <span className={`font-bold ${colorText}`}>{percentage}%</span>
+      </div>
+      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+        <div 
+          className={`h-full rounded-full transition-all duration-500 ${colorBg}`} 
+          style={{ width: `${percentage}%` }} 
+        />
+      </div>
+    </div>
   );
 };
-

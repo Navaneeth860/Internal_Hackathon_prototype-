@@ -63,7 +63,7 @@ def apply_noise(img: Image.Image) -> Image.Image:
     # Add salt and pepper noise
     row, col, ch = open_cv_image.shape
     s_vs_p = 0.5
-    amount = 0.04
+    amount = 0.005
     out = np.copy(open_cv_image)
     
     # Salt mode
@@ -77,7 +77,7 @@ def apply_noise(img: Image.Image) -> Image.Image:
     out[tuple(coords)] = 0
     
     # Apply Gaussian Blur to simulate fading/fuzziness
-    blurred = cv2.GaussianBlur(out, (5, 5), 0)
+    blurred = cv2.GaussianBlur(out, (3, 3), 0)
     
     # Convert BGR back to PIL RGB
     noisy_img = Image.fromarray(cv2.cvtColor(blurred, cv2.COLOR_BGR2RGB))

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from backend.app.preprocessing.image_processor import ImageProcessor
 from backend.app.ocr.paddle_ocr import PaddleOCREngine
 from backend.app.extraction.field_extractor import FieldExtractor
+from backend.app.explainability.evidence_mapper import EvidenceMapper
 from backend.app.validation.validator import Validator
 from backend.app.confidence.confidence_engine import ConfidenceEngine
 from backend.app.extraction.schemas import ExtractionResult
@@ -26,6 +27,7 @@ class DocumentPipeline:
         self.image_processor = ImageProcessor(output_dir=output_dir)
         self.ocr_engine = PaddleOCREngine()
         self.field_extractor = FieldExtractor()
+        self.evidence_mapper = EvidenceMapper()
         self.validator = Validator()
         self.confidence_engine = ConfidenceEngine()
 
@@ -77,6 +79,13 @@ class DocumentPipeline:
         # 4. Field Extraction (Rule-Based & Spatial Patterns)
         logger.info("Step 3/5: Extracting target land record fields...")
         extraction_result = self.field_extractor.extract(ocr_result)
+
+        # Normalize and map coordinates for explainability
+        extraction_result = self.evidence_mapper.map_evidence(
+            extraction_result, 
+            ocr_result.image_width, 
+            ocr_result.image_height
+        )
 
         # 5. Validation (Format & Mock Registry Verification)
         logger.info("Step 4/5: Running validation and format checkers...")

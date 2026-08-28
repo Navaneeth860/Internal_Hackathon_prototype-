@@ -37,7 +37,6 @@ KHATA_PATTERN = re.compile(
 # Area
 AREA_KEYWORDS = [r"total\s*area", r"land\s*area", r"area"]
 AREA_PATTERN = re.compile(
-    rf"\b(?:{'|'.join(AREA_KEYWORDS)})\b[:\-]?\s*([0-9\.\-\s]+(?:\w+|Hec|Acres|Hectares|Bigha)?)", 
     rf"\b(?:{'|'.join(AREA_KEYWORDS)})\b.*?\b(\d+(?:\.\d+)?\s*(?:acres?|hectares?|hec\b|ha\b|sq\s*ft|sqm|sq\s*yards?|bighas?|sq\.\s*ft\b)?)", 
     re.IGNORECASE
 )

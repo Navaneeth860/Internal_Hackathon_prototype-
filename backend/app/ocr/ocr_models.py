@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 class OCRElement(BaseModel):
     """
@@ -9,6 +9,8 @@ class OCRElement(BaseModel):
     confidence: float
     # 4 points representing the corners of the bounding box: [top-left, top-right, bottom-right, bottom-left]
     bbox: List[Tuple[float, float]]
+    # Optional 4 points representing the normalized corners (0.0 to 1.0)
+    normalized_bbox: Optional[List[Tuple[float, float]]] = None
 
 class OCRResult(BaseModel):
     """

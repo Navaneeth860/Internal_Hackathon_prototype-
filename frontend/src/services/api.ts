@@ -1,6 +1,7 @@
 import type { UploadResponse, ExtractionResult } from "../types/api";
 
-const BASE_URL = "http://127.0.0.1:8000";
+const host = window.location.hostname || "localhost";
+const BASE_URL = `http://${host}:8000`;
 
 export async function uploadDocument(file: File): Promise<UploadResponse> {
   const formData = new FormData();

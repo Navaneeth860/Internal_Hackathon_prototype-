@@ -26,8 +26,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
     );
   }
 
-  // Full API URL
-  const fullImageUrl = `http://127.0.0.1:8000${imageUrl}`;
+  const host = window.location.hostname || "localhost";
+  const fullImageUrl = `http://${host}:8000${imageUrl}`;
 
   return (
     <div className="bg-white rounded-xl shadow-md p-4 border border-slate-200">

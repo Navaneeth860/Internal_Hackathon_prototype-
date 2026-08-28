@@ -66,3 +66,4 @@ The API will initialize and bind to `http://127.0.0.1:8000`. You can access the 
 * **POST** `/records/{record_id}/fields/{field_name}/correct` — Applies a user-edited corrected value while maintaining original OCR values for auditing.
 * **POST** `/records/{record_id}/fields/{field_name}/verify` — Approves an extracted value as-is.
 * **POST** `/records/{record_id}/verify` — Bulk-approves all remaining unverified fields in the record.
+

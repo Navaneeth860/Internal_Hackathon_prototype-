@@ -1,0 +1,23 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Node / JS dependencies and build targets
+node_modules/
+dist/
+.rolldown/
+
+# Processed images and uploads
+data/processed/
+data/uploads/
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.user

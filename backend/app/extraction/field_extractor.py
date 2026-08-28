@@ -62,6 +62,9 @@ class FieldExtractor:
                 # Remove trailing punctuations if regex caught any
                 val = re.sub(r"^[:\-\s]+|[:\-\s]+$", "", val)
                 if val:
+                    # Ignore values that are actually label names (false positives)
+                    if val.lower() in {"name", "number", "no", "area", "village", "tehsil", "district", "rict", "value", "uni", "total"}:
+                        continue
                     return ExtractedField(
                         name=name,
                         value=val,
@@ -89,26 +92,28 @@ class FieldExtractor:
                         if candidate_value and len(candidate_value) < 100 and ":" not in candidate_value:
                             # Verify if it makes sense spatially (either horizontally aligned or below)
                             if self._is_spatially_aligned(element.bbox, next_el.bbox):
-                                return ExtractedField(
-                                    name=name,
-                                    value=candidate_value,
-                                    status="SUCCESS",
-                                    source_elements=[element, next_el],
-                                    explanation=f"Extracted spatial neighbor: '{candidate_value}' aligned with keyword '{element.text}'."
-                                )
+                                if candidate_value.lower() not in {"name", "number", "no", "area", "village", "tehsil", "district", "value", "uni", "total"}:
+                                    return ExtractedField(
+                                        name=name,
+                                        value=candidate_value,
+                                        status="SUCCESS",
+                                        source_elements=[element, next_el],
+                                        explanation=f"Extracted spatial neighbor: '{candidate_value}' aligned with keyword '{element.text}'."
+                                    )
                                 
                 # Check for horizontal neighbor to the right (strict geometry)
                 right_neighbor = self._find_right_neighbor(element, elements)
                 if right_neighbor:
                     candidate_value = right_neighbor.text.strip()
                     if candidate_value and ":" not in candidate_value:
-                        return ExtractedField(
-                            name=name,
-                            value=candidate_value,
-                            status="SUCCESS",
-                            source_elements=[element, right_neighbor],
-                            explanation=f"Extracted geometric neighbor to the right: '{candidate_value}'."
-                        )
+                        if candidate_value.lower() not in {"name", "number", "no", "area", "village", "tehsil", "district", "value", "uni", "total"}:
+                            return ExtractedField(
+                                name=name,
+                                value=candidate_value,
+                                status="SUCCESS",
+                                source_elements=[element, right_neighbor],
+                                explanation=f"Extracted geometric neighbor to the right: '{candidate_value}'."
+                            )
                         
         # If we found keywords but couldn't find a clean value
         for element in elements:

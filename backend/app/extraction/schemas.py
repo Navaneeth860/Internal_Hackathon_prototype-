@@ -21,4 +21,3 @@ class ExtractionResult(BaseModel):
     """
     fields: List[ExtractedField]
     document_type: str = "Land Record"
-

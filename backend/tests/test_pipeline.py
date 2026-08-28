@@ -103,6 +103,18 @@ def test_pipeline_document_d():
     assert fields_dict["survey_number"].confidence < 0.8
     assert "conflicts" in fields_dict["survey_number"].explanation.lower()
 
+def test_area_regex_false_positives():
+    from backend.app.extraction import patterns
+    
+    # 1. Verify correct numeric matching on filler text
+    match_ok = patterns.AREA_PATTERN.search("Area is recorded as 2.45 acres")
+    assert match_ok is not None
+    assert match_ok.group(1).strip() == "2.45 acres"
+    
+    # 2. Verify non-numeric strings do not trigger matches
+    assert patterns.AREA_PATTERN.search("Area is empty") is None
+    assert patterns.AREA_PATTERN.search("Area is recorded as acres") is None
+
 if __name__ == "__main__":
     # If run directly, generate docs and execute the pipeline manually to output result files
     print("Running end-to-end pipeline test runner...")

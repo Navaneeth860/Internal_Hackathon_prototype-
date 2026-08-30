@@ -116,6 +116,31 @@ def test_process_and_verification_workflow():
     assert fields_dict["owner_name"]["verification_status"] == "CORRECTED"
     assert fields_dict["owner_name"]["verified_at"] is not None
     
+    # Verify Audit Logs got written (1 record)
+    response_logs = client.get(f"/records/{doc_id}/audit-logs")
+    assert response_logs.status_code == 200
+    logs = response_logs.json()
+    assert len(logs) == 1
+    assert logs[0]["field_name"] == "owner_name"
+    assert logs[0]["user_role"] == "OPERATOR"
+    assert logs[0]["action"] == "CORRECTED"
+    assert logs[0]["old_value"] == "Ramesh Kumar"
+    assert logs[0]["new_value"] == "Ramesh Kumar Verma"
+
+    # Test Subdivision Area Logical Mismatch warning
+    # Document A contains survey "124/3" (subdivision of parent "124").
+    # The parent registered total area is 2.45 acres (sum of plots 1.0 + 0.8 + 0.65 = 2.45).
+    # If we correct Area to "2.50 acres", the validator should append an mismatch warning flag!
+    response_area = client.post(
+        f"/records/{doc_id}/fields/area/correct",
+        json={"corrected_value": "2.50 acres"}
+    )
+    assert response_area.status_code == 200
+    updated_area_rec = response_area.json()
+    fields_dict = {f["name"]: f for f in updated_area_rec["fields"]}
+    assert fields_dict["area"]["value"] == "2.50 acres"
+    assert any("Subdivision plot area mismatch" in w for w in fields_dict["area"]["validation_warnings"])
+
     # Approve Survey Number field as-is
     response_verify = client.post(f"/records/{doc_id}/fields/survey_number/verify")
     assert response_verify.status_code == 200
@@ -124,6 +149,15 @@ def test_process_and_verification_workflow():
     
     assert fields_dict["survey_number"]["verification_status"] == "VERIFIED"
     assert fields_dict["survey_number"]["verified_at"] is not None
+
+    # Verify Audit Logs now contain 3 records (corrected name, corrected area, verified survey number)
+    response_logs2 = client.get(f"/records/{doc_id}/audit-logs")
+    assert response_logs2.status_code == 200
+    logs2 = response_logs2.json()
+    assert len(logs2) == 3
+    assert logs2[0]["field_name"] == "survey_number"
+    assert logs2[0]["user_role"] == "REGISTRAR"
+    assert logs2[0]["action"] == "VERIFIED"
     
     # Verify entire document (auto-verifying remaining unverified fields)
     response_verify_doc = client.post(f"/records/{doc_id}/verify")

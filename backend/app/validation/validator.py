@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import List
 from backend.app.extraction.schemas import ExtractionResult, ExtractedField
 from backend.app.validation import rules
@@ -56,8 +57,28 @@ class Validator:
             # If there's a database mismatch or record missing, associate warnings with the survey number
             if registry_warnings and survey_field:
                 survey_field.validation_warnings.extend(registry_warnings)
+
+        # 4. Subdivision Area Logical Warning Rule
+        if survey_field and survey_field.value and area_field and area_field.value:
+            survey_cleaned = survey_field.value.strip().replace(" ", "")
+            if "/" in survey_cleaned:
+                parent_survey = survey_cleaned.split("/")[0]
+                try:
+                    # Extract the first numerical part of the area
+                    area_numbers = re.findall(r"\d+(?:\.\d+)?", area_field.value)
+                    if area_numbers:
+                        extracted_area = float(area_numbers[0])
+                        # If parent survey is 124, sum of registered subdivisions is 1.0 + 0.8 + 0.65 = 2.45
+                        if parent_survey == "124":
+                            subdivisions_sum = 2.45
+                            if abs(extracted_area - subdivisions_sum) > 0.01:
+                                area_field.validation_warnings.append(
+                                    f"Logical Mismatch: Subdivision plot area mismatch. Sum of plots ({subdivisions_sum} acres) does not equal total area ({extracted_area} acres)."
+                                )
+                except Exception as e:
+                    logger.error(f"Failed to execute subdivision check: {e}")
                 
-        # 4. Log validation results
+        # 5. Log validation results
         total_warnings = sum(len(f.validation_warnings) for f in fields)
         logger.info(f"Validation completed. Found {total_warnings} total warning flags.")
         

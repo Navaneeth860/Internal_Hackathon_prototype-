@@ -7,10 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
-from backend.app.models import DBDocument, DBRecord
+from backend.app.models import DBDocument, DBRecord, DBAuditLog
 from backend.app.pipeline.document_pipeline import DocumentPipeline
 from backend.app.pipeline.verification_manager import VerificationManager
 from backend.app.extraction.schemas import ExtractionResult
+from backend.app.validation.validator import Validator
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -141,6 +142,26 @@ def get_record(record_id: str, db: Session = Depends(get_db)):
     # Deserialize string back to ExtractionResult object
     return ExtractionResult.model_validate_json(db_record.json_data)
 
+@router.get("/records/{record_id}/audit-logs")
+def get_audit_logs(record_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieves the audit trail log history for a specific record.
+    """
+    logs = db.query(DBAuditLog).filter(DBAuditLog.record_id == record_id).order_by(DBAuditLog.timestamp.desc()).all()
+    return [
+        {
+            "id": log.id,
+            "record_id": log.record_id,
+            "field_name": log.field_name,
+            "user_role": log.user_role,
+            "action": log.action,
+            "old_value": log.old_value,
+            "new_value": log.new_value,
+            "timestamp": log.timestamp.isoformat()
+        }
+        for log in logs
+    ]
+
 @router.post("/records/{record_id}/fields/{field_name}/correct")
 def correct_field(record_id: str, field_name: str, payload: CorrectionRequest, db: Session = Depends(get_db)):
     """
@@ -164,14 +185,36 @@ def correct_field(record_id: str, field_name: str, payload: CorrectionRequest, d
             detail=f"Field '{field_name}' not found in record."
         )
         
+    # Get current old value
+    old_value = None
+    for field in record.fields:
+        if field.name == field_name:
+            old_value = field.value
+            break
+            
     try:
         manager = VerificationManager()
         updated_record = manager.correct_field(record, field_name, payload.corrected_value)
         
+        # Re-run Validator to dynamically compute validation warnings after corrections (e.g. Area logical sums)
+        validator = Validator()
+        updated_record = validator.validate(updated_record)
+        
         # Save back to database
         db_record.json_data = updated_record.model_dump_json()
-        db.commit()
         
+        # Insert audit log
+        audit_log = DBAuditLog(
+            record_id=record_id,
+            field_name=field_name,
+            user_role="OPERATOR",
+            action="CORRECTED",
+            old_value=old_value,
+            new_value=payload.corrected_value
+        )
+        db.add(audit_log)
+        
+        db.commit()
         return updated_record
     except Exception as e:
         logger.error(f"Field correction failed for record '{record_id}': {e}")
@@ -202,14 +245,32 @@ def verify_field(record_id: str, field_name: str, db: Session = Depends(get_db))
             detail=f"Field '{field_name}' not found in record."
         )
         
+    # Get current value
+    old_value = None
+    for field in record.fields:
+        if field.name == field_name:
+            old_value = field.value
+            break
+            
     try:
         manager = VerificationManager()
         updated_record = manager.verify_field(record, field_name)
         
         # Save back to database
         db_record.json_data = updated_record.model_dump_json()
-        db.commit()
         
+        # Insert audit log
+        audit_log = DBAuditLog(
+            record_id=record_id,
+            field_name=field_name,
+            user_role="REGISTRAR",
+            action="VERIFIED",
+            old_value=old_value,
+            new_value=old_value if old_value else ""
+        )
+        db.add(audit_log)
+        
+        db.commit()
         return updated_record
     except Exception as e:
         logger.error(f"Field verification failed for record '{record_id}': {e}")
@@ -233,14 +294,32 @@ def verify_document(record_id: str, db: Session = Depends(get_db)):
         
     record = ExtractionResult.model_validate_json(db_record.json_data)
     
+    # Get list of fields that will be verified
+    to_verify = []
+    for field in record.fields:
+        if field.verification_status not in ["VERIFIED", "CORRECTED"]:
+            to_verify.append((field.name, field.value))
+            
     try:
         manager = VerificationManager()
         updated_record = manager.verify_document(record)
         
         # Save back to database
         db_record.json_data = updated_record.model_dump_json()
-        db.commit()
         
+        # Log audit trails for all bulk-verified fields
+        for name, val in to_verify:
+            audit_log = DBAuditLog(
+                record_id=record_id,
+                field_name=name,
+                user_role="REGISTRAR",
+                action="VERIFIED",
+                old_value=val,
+                new_value=val if val else ""
+            )
+            db.add(audit_log)
+            
+        db.commit()
         return updated_record
     except Exception as e:
         logger.error(f"Document verification failed for record '{record_id}': {e}")

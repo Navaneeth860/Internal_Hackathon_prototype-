@@ -8,6 +8,8 @@ interface FieldListProps {
   onFieldSelect: (fieldName: string) => void;
   onCorrectField: (fieldName: string, newValue: string) => Promise<void>;
   onVerifyField: (fieldName: string) => Promise<void>;
+  canCorrect: boolean;
+  canVerify: boolean;
 }
 
 export const FieldList: React.FC<FieldListProps> = ({
@@ -16,6 +18,8 @@ export const FieldList: React.FC<FieldListProps> = ({
   onFieldSelect,
   onCorrectField,
   onVerifyField,
+  canCorrect,
+  canVerify,
 }) => {
   return (
     <div className="flex flex-col gap-4 max-h-[600px] overflow-y-auto pr-2">
@@ -27,6 +31,8 @@ export const FieldList: React.FC<FieldListProps> = ({
           onSelect={() => onFieldSelect(field.name)}
           onCorrect={(newValue) => onCorrectField(field.name, newValue)}
           onVerify={() => onVerifyField(field.name)}
+          canCorrect={canCorrect}
+          canVerify={canVerify}
         />
       ))}
     </div>

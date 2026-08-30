@@ -3,6 +3,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.app.api.endpoints import router as api_router
+from backend.app.database import Base, engine
+import backend.app.models  # Register models
+
+# Initialize database tables on application startup
+Base.metadata.create_all(bind=engine)
 
 # Set up logging
 logging.basicConfig(
@@ -39,4 +44,3 @@ app.mount("/data", StaticFiles(directory="data"), name="data")
 app.include_router(api_router)
 
 logger.info("FastAPI backend initialized successfully with CORS enabled and /data static files mounted.")
-

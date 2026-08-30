@@ -2,22 +2,18 @@ import os
 import uuid
 import shutil
 import logging
-from typing import Dict
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from backend.app.database import get_db
+from backend.app.models import DBDocument, DBRecord
 from backend.app.pipeline.document_pipeline import DocumentPipeline
 from backend.app.pipeline.verification_manager import VerificationManager
 from backend.app.extraction.schemas import ExtractionResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# Temporary in-memory databases (approved for Phase 3)
-# DOCUMENTS_DB maps document_id (str) -> file_path (str)
-DOCUMENTS_DB: Dict[str, str] = {}
-# RECORDS_DB maps record_id (str) -> ExtractionResult
-RECORDS_DB: Dict[str, ExtractionResult] = {}
 
 UPLOAD_DIR = "data/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -34,7 +30,7 @@ def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
 @router.post("/documents/upload", status_code=status.HTTP_201_CREATED)
-def upload_document(file: UploadFile = File(...)):
+def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Receives a document file, validates its extension, saves it locally under data/uploads/,
     and returns a unique document_id.
@@ -54,7 +50,12 @@ def upload_document(file: UploadFile = File(...)):
     try:
         with open(save_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        DOCUMENTS_DB[document_id] = save_path
+        
+        # Save document metadata to database
+        db_doc = DBDocument(id=document_id, filename=filename, filepath=save_path)
+        db.add(db_doc)
+        db.commit()
+        
         logger.info(f"File uploaded successfully: {filename} saved to {save_path}")
         return {
             "document_id": document_id,
@@ -63,24 +64,27 @@ def upload_document(file: UploadFile = File(...)):
         }
     except Exception as e:
         logger.error(f"Failed to save uploaded file: {e}")
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save uploaded file: {str(e)}"
         )
 
 @router.post("/documents/{document_id}/process")
-def process_document(document_id: str):
+def process_document(document_id: str, db: Session = Depends(get_db)):
     """
     Processes the uploaded document using the existing Phase 1+2 DocumentPipeline.
-    Stores and indexes the resulting ExtractionResult in the in-memory RECORDS_DB.
+    Stores and indexes the resulting ExtractionResult in the records database.
     """
-    file_path = DOCUMENTS_DB.get(document_id)
-    if not file_path or not os.path.exists(file_path):
+    # Fetch file path from database
+    db_doc = db.query(DBDocument).filter(DBDocument.id == document_id).first()
+    if not db_doc or not os.path.exists(db_doc.filepath):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with ID '{document_id}' not found."
         )
         
+    file_path = db_doc.filepath
     try:
         pipeline = DocumentPipeline()
         result = pipeline.process_document(file_path)
@@ -95,45 +99,63 @@ def process_document(document_id: str):
         image_url = f"/data/processed/{processed_filename}"
         result.image_url = image_url
         
-        # Link the record directly to the document_id for easy frontend routing
-        record_id = document_id
-        RECORDS_DB[record_id] = result
+        # Link the record directly to the document_id and save
+        db_record = db.query(DBRecord).filter(DBRecord.id == document_id).first()
+        if db_record:
+            db_record.document_type = result.document_type
+            db_record.image_url = image_url
+            db_record.json_data = result.model_dump_json()
+        else:
+            db_record = DBRecord(
+                id=document_id,
+                document_type=result.document_type,
+                image_url=image_url,
+                json_data=result.model_dump_json()
+            )
+            db.add(db_record)
         
-        logger.info(f"Successfully processed document '{document_id}'. Saved record '{record_id}'. Image URL: {image_url}")
+        db.commit()
+        
+        logger.info(f"Successfully processed document '{document_id}'. Saved record. Image URL: {image_url}")
         return result
     except Exception as e:
         logger.error(f"Processing failed for document '{document_id}': {e}")
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Document processing failed: {str(e)}"
         )
 
 @router.get("/records/{record_id}")
-def get_record(record_id: str):
+def get_record(record_id: str, db: Session = Depends(get_db)):
     """
     Retrieves the processed structured record by record ID.
     """
-    record = RECORDS_DB.get(record_id)
-    if not record:
+    db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
+    if not db_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID '{record_id}' not found."
         )
-    return record
+    
+    # Deserialize string back to ExtractionResult object
+    return ExtractionResult.model_validate_json(db_record.json_data)
 
 @router.post("/records/{record_id}/fields/{field_name}/correct")
-def correct_field(record_id: str, field_name: str, payload: CorrectionRequest):
+def correct_field(record_id: str, field_name: str, payload: CorrectionRequest, db: Session = Depends(get_db)):
     """
     Applies a human correction to a specific field.
     Preserves original_value for auditing.
     """
-    record = RECORDS_DB.get(record_id)
-    if not record:
+    db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
+    if not db_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID '{record_id}' not found."
         )
         
+    record = ExtractionResult.model_validate_json(db_record.json_data)
+    
     # Check if field_name exists in record fields
     field_names = {field.name for field in record.fields}
     if field_name not in field_names:
@@ -145,27 +167,34 @@ def correct_field(record_id: str, field_name: str, payload: CorrectionRequest):
     try:
         manager = VerificationManager()
         updated_record = manager.correct_field(record, field_name, payload.corrected_value)
-        RECORDS_DB[record_id] = updated_record
+        
+        # Save back to database
+        db_record.json_data = updated_record.model_dump_json()
+        db.commit()
+        
         return updated_record
     except Exception as e:
         logger.error(f"Field correction failed for record '{record_id}': {e}")
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Correction failed: {str(e)}"
         )
 
 @router.post("/records/{record_id}/fields/{field_name}/verify")
-def verify_field(record_id: str, field_name: str):
+def verify_field(record_id: str, field_name: str, db: Session = Depends(get_db)):
     """
     Approves the extracted field value as correct/valid.
     """
-    record = RECORDS_DB.get(record_id)
-    if not record:
+    db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
+    if not db_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID '{record_id}' not found."
         )
         
+    record = ExtractionResult.model_validate_json(db_record.json_data)
+    
     field_names = {field.name for field in record.fields}
     if field_name not in field_names:
         raise HTTPException(
@@ -176,36 +205,47 @@ def verify_field(record_id: str, field_name: str):
     try:
         manager = VerificationManager()
         updated_record = manager.verify_field(record, field_name)
-        RECORDS_DB[record_id] = updated_record
+        
+        # Save back to database
+        db_record.json_data = updated_record.model_dump_json()
+        db.commit()
+        
         return updated_record
     except Exception as e:
         logger.error(f"Field verification failed for record '{record_id}': {e}")
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Verification failed: {str(e)}"
         )
 
 @router.post("/records/{record_id}/verify")
-def verify_document(record_id: str):
+def verify_document(record_id: str, db: Session = Depends(get_db)):
     """
     Auto-verifies all remaining unverified fields in the record.
     """
-    record = RECORDS_DB.get(record_id)
-    if not record:
+    db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
+    if not db_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID '{record_id}' not found."
         )
         
+    record = ExtractionResult.model_validate_json(db_record.json_data)
+    
     try:
         manager = VerificationManager()
         updated_record = manager.verify_document(record)
-        RECORDS_DB[record_id] = updated_record
+        
+        # Save back to database
+        db_record.json_data = updated_record.model_dump_json()
+        db.commit()
+        
         return updated_record
     except Exception as e:
         logger.error(f"Document verification failed for record '{record_id}': {e}")
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Document verification failed: {str(e)}"
         )
-

@@ -2,7 +2,8 @@ import os
 import uuid
 import shutil
 import logging
-from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends
+from typing import Optional
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,25 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Request schema for human corrections
 class CorrectionRequest(BaseModel):
     corrected_value: str
+
+def get_current_role(x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token")) -> str:
+    """
+    Dependency to authenticate and authorize requests based on mock token values.
+    """
+    if not x_auth_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed: Missing X-Auth-Token header."
+        )
+    if x_auth_token == "operator-token-sih2026":
+        return "OPERATOR"
+    elif x_auth_token == "registrar-token-sih2026":
+        return "REGISTRAR"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed: Invalid auth token."
+        )
 
 @router.get("/health")
 def health_check():
@@ -44,6 +64,27 @@ def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db))
             detail=f"Unsupported file type '{ext}'. Supported types: PNG, JPG, JPEG, PDF."
         )
         
+    # Calculate file MD5 hash for duplicate detection
+    import hashlib
+    try:
+        file.file.seek(0)
+        file_bytes = file.file.read()
+        file_hash = hashlib.md5(file_bytes).hexdigest()
+        file.file.seek(0)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to calculate file hash: {str(e)}"
+        )
+        
+    # Check for exact duplicate upload
+    duplicate = db.query(DBDocument).filter(DBDocument.file_hash == file_hash).first()
+    if duplicate:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Duplicate Upload: This exact document file has already been uploaded."
+        )
+        
     document_id = str(uuid.uuid4())
     save_filename = f"{document_id}{ext}"
     save_path = os.path.join(UPLOAD_DIR, save_filename)
@@ -53,11 +94,11 @@ def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db))
             shutil.copyfileobj(file.file, buffer)
         
         # Save document metadata to database
-        db_doc = DBDocument(id=document_id, filename=filename, filepath=save_path)
+        db_doc = DBDocument(id=document_id, filename=filename, filepath=save_path, file_hash=file_hash)
         db.add(db_doc)
         db.commit()
         
-        logger.info(f"File uploaded successfully: {filename} saved to {save_path}")
+        logger.info(f"File uploaded successfully: {filename} saved to {save_path} with hash {file_hash}")
         return {
             "document_id": document_id,
             "filename": filename,
@@ -79,24 +120,18 @@ def process_document(document_id: str, db: Session = Depends(get_db)):
     """
     # Fetch file path from database
     db_doc = db.query(DBDocument).filter(DBDocument.id == document_id).first()
-    if not db_doc or not os.path.exists(db_doc.filepath):
+    if not db_doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with ID '{document_id}' not found."
         )
         
-    file_path = db_doc.filepath
     try:
         pipeline = DocumentPipeline()
-        result = pipeline.process_document(file_path)
+        result = pipeline.process_document(db_doc.filepath)
         
-        # Determine the preprocessed image filename and URL
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext == ".pdf":
-            processed_filename = f"{document_id}_page1_processed_adaptive.png"
-        else:
-            processed_filename = f"{document_id}_processed_adaptive{ext}"
-        
+        # Build dynamic web-accessible image path
+        processed_filename = f"{document_id}_processed_adaptive.png"
         image_url = f"/data/processed/{processed_filename}"
         result.image_url = image_url
         
@@ -104,12 +139,16 @@ def process_document(document_id: str, db: Session = Depends(get_db)):
         db_record = db.query(DBRecord).filter(DBRecord.id == document_id).first()
         if db_record:
             db_record.document_type = result.document_type
+            db_record.document_subtype = result.document_subtype
+            db_record.extraction_method = result.extraction_method
             db_record.image_url = image_url
             db_record.json_data = result.model_dump_json()
         else:
             db_record = DBRecord(
                 id=document_id,
                 document_type=result.document_type,
+                document_subtype=result.document_subtype,
+                extraction_method=result.extraction_method,
                 image_url=image_url,
                 json_data=result.model_dump_json()
             )
@@ -126,6 +165,38 @@ def process_document(document_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Document processing failed: {str(e)}"
         )
+
+@router.get("/records")
+def get_records(db: Session = Depends(get_db)):
+    """
+    Retrieves a list of all processed records with repository summary details.
+    """
+    results = db.query(DBRecord, DBDocument).join(DBDocument, DBRecord.id == DBDocument.id).order_by(DBDocument.upload_date.desc()).all()
+    
+    records_list = []
+    for db_record, db_doc in results:
+        try:
+            record_data = ExtractionResult.model_validate_json(db_record.json_data)
+            fields = record_data.fields
+            fields_count = len(fields)
+            verified_count = sum(1 for f in fields if f.verification_status in ["VERIFIED", "CORRECTED"])
+            
+            status_str = "VERIFIED" if verified_count == fields_count else "PENDING"
+            avg_conf = sum(f.confidence for f in fields) / fields_count if fields_count > 0 else 0.0
+            
+            records_list.append({
+                "id": db_record.id,
+                "filename": db_doc.filename,
+                "document_subtype": db_record.document_subtype,
+                "extraction_method": db_record.extraction_method,
+                "average_confidence": round(avg_conf, 2),
+                "verification_status": status_str,
+                "upload_date": db_doc.upload_date.isoformat()
+            })
+        except Exception as e:
+            logger.error(f"Error parsing record {db_record.id}: {e}")
+            
+    return records_list
 
 @router.get("/records/{record_id}")
 def get_record(record_id: str, db: Session = Depends(get_db)):
@@ -163,11 +234,23 @@ def get_audit_logs(record_id: str, db: Session = Depends(get_db)):
     ]
 
 @router.post("/records/{record_id}/fields/{field_name}/correct")
-def correct_field(record_id: str, field_name: str, payload: CorrectionRequest, db: Session = Depends(get_db)):
+def correct_field(
+    record_id: str, 
+    field_name: str, 
+    payload: CorrectionRequest, 
+    db: Session = Depends(get_db),
+    role: str = Depends(get_current_role)
+):
     """
     Applies a human correction to a specific field.
     Preserves original_value for auditing.
     """
+    if role != "OPERATOR":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authorization failed: Only Operators can correct fields."
+        )
+        
     db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
     if not db_record:
         raise HTTPException(
@@ -207,7 +290,7 @@ def correct_field(record_id: str, field_name: str, payload: CorrectionRequest, d
         audit_log = DBAuditLog(
             record_id=record_id,
             field_name=field_name,
-            user_role="OPERATOR",
+            user_role=role,
             action="CORRECTED",
             old_value=old_value,
             new_value=payload.corrected_value
@@ -225,10 +308,21 @@ def correct_field(record_id: str, field_name: str, payload: CorrectionRequest, d
         )
 
 @router.post("/records/{record_id}/fields/{field_name}/verify")
-def verify_field(record_id: str, field_name: str, db: Session = Depends(get_db)):
+def verify_field(
+    record_id: str, 
+    field_name: str, 
+    db: Session = Depends(get_db),
+    role: str = Depends(get_current_role)
+):
     """
     Approves the extracted field value as correct/valid.
     """
+    if role != "REGISTRAR":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authorization failed: Only Registrars can verify fields."
+        )
+        
     db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
     if not db_record:
         raise HTTPException(
@@ -263,7 +357,7 @@ def verify_field(record_id: str, field_name: str, db: Session = Depends(get_db))
         audit_log = DBAuditLog(
             record_id=record_id,
             field_name=field_name,
-            user_role="REGISTRAR",
+            user_role=role,
             action="VERIFIED",
             old_value=old_value,
             new_value=old_value if old_value else ""
@@ -281,10 +375,20 @@ def verify_field(record_id: str, field_name: str, db: Session = Depends(get_db))
         )
 
 @router.post("/records/{record_id}/verify")
-def verify_document(record_id: str, db: Session = Depends(get_db)):
+def verify_document(
+    record_id: str, 
+    db: Session = Depends(get_db),
+    role: str = Depends(get_current_role)
+):
     """
     Auto-verifies all remaining unverified fields in the record.
     """
+    if role != "REGISTRAR":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authorization failed: Only Registrars can verify records."
+        )
+        
     db_record = db.query(DBRecord).filter(DBRecord.id == record_id).first()
     if not db_record:
         raise HTTPException(
@@ -312,7 +416,7 @@ def verify_document(record_id: str, db: Session = Depends(get_db)):
             audit_log = DBAuditLog(
                 record_id=record_id,
                 field_name=name,
-                user_role="REGISTRAR",
+                user_role=role,
                 action="VERIFIED",
                 old_value=val,
                 new_value=val if val else ""

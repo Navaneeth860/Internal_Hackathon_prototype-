@@ -10,3 +10,25 @@ fastapi>=0.100.0
 uvicorn>=0.22.0
 python-multipart>=0.0.6
 httpx>=0.24.0
+
+
+# ── Previously missing ──────────────────────────────────────────────────────
+# SQLAlchemy was used throughout the backend but never listed here.
+# Adding it now prevents a crash on fresh installs.
+sqlalchemy>=2.0.0
+
+# pdf2image + poppler are required for PDF upload support.
+# poppler must also be installed at the OS level:
+#   Ubuntu/Debian: apt-get install -y poppler-utils
+#   macOS:         brew install poppler
+#   Windows:       download from https://github.com/oschwartz10612/poppler-windows
+pdf2image>=1.16.0
+
+# ── Phase 2: local LLM inference ────────────────────────────────────────────
+# ollama is the Python client for the Ollama local inference server.
+# Before running the backend, install Ollama (https://ollama.com/download)
+# and pull the model:
+#   ollama pull llama3
+# The backend gracefully falls back to the keyword extractor if Ollama is
+# not running, so the rest of the system is not broken if you skip this.
+ollama>=0.1.7

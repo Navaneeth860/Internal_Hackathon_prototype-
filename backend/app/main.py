@@ -9,6 +9,26 @@ import backend.app.models  # Register models
 # Initialize database tables on application startup
 Base.metadata.create_all(bind=engine)
 
+# Dynamically migrate database schema for Phase 2 columns
+try:
+    with engine.connect() as conn:
+        cursor = conn.execute("PRAGMA table_info(records)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns:
+            if "document_subtype" not in columns:
+                conn.execute("ALTER TABLE records ADD COLUMN document_subtype VARCHAR DEFAULT 'Unknown'")
+            if "extraction_method" not in columns:
+                conn.execute("ALTER TABLE records ADD COLUMN extraction_method VARCHAR DEFAULT 'keyword'")
+                
+        # Migrate documents table
+        cursor_doc = conn.execute("PRAGMA table_info(documents)")
+        columns_doc = [row[1] for row in cursor_doc.fetchall()]
+        if columns_doc:
+            if "file_hash" not in columns_doc:
+                conn.execute("ALTER TABLE documents ADD COLUMN file_hash VARCHAR DEFAULT NULL")
+except Exception as e:
+    logging.getLogger(__name__).warning(f"Database migration warning: {e}")
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,

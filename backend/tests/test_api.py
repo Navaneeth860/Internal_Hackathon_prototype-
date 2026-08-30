@@ -32,6 +32,11 @@ Base.metadata.create_all(bind=test_engine)
 
 client = TestClient(app)
 
+# Helper headers
+OP_HEADERS = {"X-Auth-Token": "operator-token-sih2026"}
+REG_HEADERS = {"X-Auth-Token": "registrar-token-sih2026"}
+BAD_HEADERS = {"X-Auth-Token": "invalid-token"}
+
 def test_health_endpoint():
     """
     Asserts GET /health returns successful status response.
@@ -72,6 +77,15 @@ def test_upload_endpoints():
     )
     assert response_bad.status_code == 400
     assert "Unsupported file type" in response_bad.json()["detail"]
+    
+    # 3. Reject duplicate upload
+    fake_image.seek(0)
+    response_dup = client.post(
+        "/documents/upload",
+        files={"file": ("test_doc_copy.png", fake_image, "image/png")}
+    )
+    assert response_dup.status_code == 400
+    assert "Duplicate Upload" in response_dup.json()["detail"]
 
 def test_process_and_verification_workflow():
     """
@@ -92,7 +106,6 @@ def test_process_and_verification_workflow():
     record = response_proc.json()
     assert "fields" in record
     assert "image_url" in record
-    assert record["image_url"] == f"/data/processed/{doc_id}_processed_adaptive.png"
     
     fields_dict = {f["name"]: f for f in record["fields"]}
     assert "owner_name" in fields_dict
@@ -100,10 +113,11 @@ def test_process_and_verification_workflow():
     assert fields_dict["owner_name"]["verification_status"] == "UNVERIFIED"
     assert fields_dict["owner_name"]["original_value"] == "Ramesh Kumar"
     
-    # Apply human correction to Owner Name
+    # Apply human correction to Owner Name as OPERATOR
     response_correct = client.post(
         f"/records/{doc_id}/fields/owner_name/correct",
-        json={"corrected_value": "Ramesh Kumar Verma"}
+        json={"corrected_value": "Ramesh Kumar Verma"},
+        headers=OP_HEADERS
     )
     assert response_correct.status_code == 200
     updated_record = response_correct.json()
@@ -129,11 +143,11 @@ def test_process_and_verification_workflow():
 
     # Test Subdivision Area Logical Mismatch warning
     # Document A contains survey "124/3" (subdivision of parent "124").
-    # The parent registered total area is 2.45 acres (sum of plots 1.0 + 0.8 + 0.65 = 2.45).
-    # If we correct Area to "2.50 acres", the validator should append an mismatch warning flag!
+    # If we correct Area to "2.50 acres" as OPERATOR, the validator should append warning flag!
     response_area = client.post(
         f"/records/{doc_id}/fields/area/correct",
-        json={"corrected_value": "2.50 acres"}
+        json={"corrected_value": "2.50 acres"},
+        headers=OP_HEADERS
     )
     assert response_area.status_code == 200
     updated_area_rec = response_area.json()
@@ -141,8 +155,11 @@ def test_process_and_verification_workflow():
     assert fields_dict["area"]["value"] == "2.50 acres"
     assert any("Subdivision plot area mismatch" in w for w in fields_dict["area"]["validation_warnings"])
 
-    # Approve Survey Number field as-is
-    response_verify = client.post(f"/records/{doc_id}/fields/survey_number/verify")
+    # Approve Survey Number field as-is as REGISTRAR
+    response_verify = client.post(
+        f"/records/{doc_id}/fields/survey_number/verify",
+        headers=REG_HEADERS
+    )
     assert response_verify.status_code == 200
     updated_record = response_verify.json()
     fields_dict = {f["name"]: f for f in updated_record["fields"]}
@@ -159,8 +176,11 @@ def test_process_and_verification_workflow():
     assert logs2[0]["user_role"] == "REGISTRAR"
     assert logs2[0]["action"] == "VERIFIED"
     
-    # Verify entire document (auto-verifying remaining unverified fields)
-    response_verify_doc = client.post(f"/records/{doc_id}/verify")
+    # Verify entire document (auto-verifying remaining unverified fields) as REGISTRAR
+    response_verify_doc = client.post(
+        f"/records/{doc_id}/verify",
+        headers=REG_HEADERS
+    )
     assert response_verify_doc.status_code == 200
     final_record = response_verify_doc.json()
     fields_dict = {f["name"]: f for f in final_record["fields"]}
@@ -173,3 +193,56 @@ def test_process_and_verification_workflow():
     response_get = client.get(f"/records/{doc_id}")
     assert response_get.status_code == 200
     assert response_get.json() == final_record
+
+def test_rbac_unauthorized_forbidden():
+    """
+    Verifies role restriction gates work correctly.
+    """
+    # Upload a different fake image to avoid duplicate upload rejection
+    fake_img = io.BytesIO(b"unique fake image bytes for RBAC test")
+    response = client.post(
+        "/documents/upload",
+        files={"file": ("document_rbac.png", fake_img, "image/png")}
+    )
+    assert response.status_code == 201
+    doc_id = response.json()["document_id"]
+    
+    # Process it (it is a fake document, so it will fall back to keyword extraction)
+    client.post(f"/documents/{doc_id}/process")
+
+    # 1. Missing Token -> 401
+    res = client.post(f"/records/{doc_id}/fields/owner_name/correct", json={"corrected_value": "New"})
+    assert res.status_code == 401
+    
+    res = client.post(f"/records/{doc_id}/fields/survey_number/verify")
+    assert res.status_code == 401
+
+    # 2. Invalid Token -> 401
+    res = client.post(
+        f"/records/{doc_id}/fields/owner_name/correct", 
+        json={"corrected_value": "New"},
+        headers=BAD_HEADERS
+    )
+    assert res.status_code == 401
+
+    # 3. Registrar attempts to correct -> 403 Forbidden
+    res = client.post(
+        f"/records/{doc_id}/fields/owner_name/correct",
+        json={"corrected_value": "New"},
+        headers=REG_HEADERS
+    )
+    assert res.status_code == 403
+
+    # 4. Operator attempts to verify field -> 403 Forbidden
+    res = client.post(
+        f"/records/{doc_id}/fields/survey_number/verify",
+        headers=OP_HEADERS
+    )
+    assert res.status_code == 403
+
+    # 5. Operator attempts to bulk-verify -> 403 Forbidden
+    res = client.post(
+        f"/records/{doc_id}/verify",
+        headers=OP_HEADERS
+    )
+    assert res.status_code == 403

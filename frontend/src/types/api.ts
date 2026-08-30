@@ -22,6 +22,8 @@ export interface ExtractedField {
 export interface ExtractionResult {
   fields: ExtractedField[];
   document_type: string;
+  document_subtype?: string;
+  extraction_method?: string;
   image_url: string | null;
 }
 

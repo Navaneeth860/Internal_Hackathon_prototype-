@@ -1,10 +1,26 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UploadPanel } from "./components/UploadPanel";
 import { DocumentViewer } from "./components/DocumentViewer";
 import { FieldList } from "./components/FieldList";
-import { correctField, verifyField, verifyDocument, getAuditLogs } from "./services/api";
+import { RepositoryPanel } from "./components/RepositoryPanel";
+import { 
+  correctField, 
+  verifyField, 
+  verifyDocument, 
+  getAuditLogs, 
+  getRecords, 
+  getRecord 
+} from "./services/api";
 import type { ExtractionResult } from "./types/api";
-import { FileText, Shield, FileCheck, AlertCircle, CheckSquare, RefreshCw, History } from "lucide-react";
+import { 
+  FileText, 
+  Shield, 
+  FileCheck, 
+  AlertCircle, 
+  CheckSquare, 
+  RefreshCw, 
+  History
+} from "lucide-react";
 
 export default function App() {
   const [documentId, setDocumentId] = useState<string | null>(null);
@@ -15,6 +31,21 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<"OPERATOR" | "REGISTRAR">("OPERATOR");
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [repositoryRecords, setRepositoryRecords] = useState<any[]>([]);
+
+  // Load repository records list on mounting
+  useEffect(() => {
+    fetchRepository();
+  }, []);
+
+  const fetchRepository = async () => {
+    try {
+      const records = await getRecords();
+      setRepositoryRecords(records);
+    } catch (err: any) {
+      console.error("Failed to fetch repository records:", err);
+    }
+  };
 
   const handleUploadSuccess = (id: string, name: string) => {
     setDocumentId(id);
@@ -22,6 +53,7 @@ export default function App() {
     setRecord(null);
     setAuditLogs([]);
     setError(null);
+    fetchRepository();
   };
 
   const handleProcessStart = () => {
@@ -45,6 +77,7 @@ export default function App() {
     if (documentId) {
       await fetchAuditLogs(documentId);
     }
+    await fetchRepository(); // Update database-wide dashboard statistics
   };
 
   const handleProcessFailure = (err: string) => {
@@ -55,9 +88,10 @@ export default function App() {
   const handleCorrectField = async (fieldName: string, newValue: string) => {
     if (!documentId) return;
     try {
-      const updated = await correctField(documentId, fieldName, newValue);
+      const updated = await correctField(documentId, fieldName, newValue, userRole);
       setRecord(updated);
       await fetchAuditLogs(documentId);
+      await fetchRepository(); // Update database-wide dashboard statistics
     } catch (err: any) {
       alert(`Failed to correct field: ${err.message}`);
     }
@@ -66,9 +100,10 @@ export default function App() {
   const handleVerifyField = async (fieldName: string) => {
     if (!documentId) return;
     try {
-      const updated = await verifyField(documentId, fieldName);
+      const updated = await verifyField(documentId, fieldName, userRole);
       setRecord(updated);
       await fetchAuditLogs(documentId);
+      await fetchRepository(); // Update database-wide dashboard statistics
     } catch (err: any) {
       alert(`Failed to verify field: ${err.message}`);
     }
@@ -77,15 +112,40 @@ export default function App() {
   const handleApproveDocument = async () => {
     if (!documentId) return;
     try {
-      const updated = await verifyDocument(documentId);
+      const updated = await verifyDocument(documentId, userRole);
       setRecord(updated);
       await fetchAuditLogs(documentId);
+      await fetchRepository(); // Update database-wide dashboard statistics
     } catch (err: any) {
       alert(`Failed to approve document: ${err.message}`);
     }
   };
 
-  // Compute summary metrics dynamically for SIH live score review
+  const handleSelectRecord = async (recordId: string) => {
+    try {
+      setIsProcessing(true);
+      setError(null);
+      const data = await getRecord(recordId);
+      setRecord(data);
+      setDocumentId(recordId);
+      
+      const matching = repositoryRecords.find(r => r.id === recordId);
+      if (matching) {
+        setFilename(matching.filename);
+      } else {
+        setFilename(`Document ${recordId.substring(0, 8)}`);
+      }
+      
+      setSelectedFieldName(null);
+      await fetchAuditLogs(recordId);
+      setIsProcessing(false);
+    } catch (err: any) {
+      setIsProcessing(false);
+      alert(`Failed to load record: ${err.message}`);
+    }
+  };
+
+  // Single-record dynamic details
   const fields = record?.fields || [];
   const fieldsCount = fields.length;
   const verifiedCount = fields.filter(
@@ -94,6 +154,14 @@ export default function App() {
   const needsReviewCount = fieldsCount - verifiedCount;
   const avgConfidence = fieldsCount > 0
     ? Math.round((fields.reduce((sum, f) => sum + f.confidence, 0) / fieldsCount) * 100)
+    : 0;
+
+  // Global persistent stats computed from repository
+  const totalDocs = repositoryRecords.length;
+  const verifiedDocs = repositoryRecords.filter(r => r.verification_status === "VERIFIED").length;
+  const pendingDocs = repositoryRecords.filter(r => r.verification_status === "PENDING").length;
+  const globalAvgConfidence = totalDocs > 0
+    ? Math.round((repositoryRecords.reduce((sum, r) => sum + r.average_confidence, 0) / totalDocs) * 100)
     : 0;
 
   return (
@@ -146,6 +214,46 @@ export default function App() {
         </div>
       </header>
 
+      {/* Persistent Global Database Dashboard Metrics */}
+      <section className="max-w-7xl mx-auto w-full px-5 pt-5 grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Repository</span>
+            <span className="text-xl font-black text-slate-800 mt-1 block">{totalDocs} Documents</span>
+          </div>
+          <div className="bg-indigo-50 p-2.5 rounded-lg text-indigo-600">
+            <FileText className="w-5 h-5" />
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Verified DB Records</span>
+            <span className="text-xl font-black text-emerald-600 mt-1 block">{verifiedDocs} Records</span>
+          </div>
+          <div className="bg-emerald-550/10 p-2.5 rounded-lg text-emerald-600">
+            <CheckSquare className="w-5 h-5" />
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Registrar Review</span>
+            <span className="text-xl font-black text-amber-600 mt-1 block">{pendingDocs} Pending</span>
+          </div>
+          <div className="bg-amber-550/10 p-2.5 rounded-lg text-amber-600">
+            <AlertCircle className="w-5 h-5" />
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Global Avg Confidence</span>
+            <span className="text-xl font-black text-indigo-600 mt-1 block">{globalAvgConfidence}% Accuracy</span>
+          </div>
+          <div className="bg-indigo-50 p-2.5 rounded-lg text-indigo-600">
+            <Shield className="w-5 h-5" />
+          </div>
+        </div>
+      </section>
+
       {/* Main Grid Viewport */}
       <main className="flex-grow p-5 max-w-7xl mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         
@@ -169,6 +277,13 @@ export default function App() {
             onProcessFailure={handleProcessFailure}
           />
           
+          <RepositoryPanel
+            records={repositoryRecords}
+            onSelectRecord={handleSelectRecord}
+            onRefresh={fetchRepository}
+            selectedId={documentId}
+          />
+
           <DocumentViewer
             imageUrl={record ? record.image_url : null}
             fields={record ? record.fields : []}
@@ -184,7 +299,7 @@ export default function App() {
               <FileCheck className="w-12 h-12 text-slate-300 mb-3" />
               <h3 className="text-slate-700 font-bold text-sm uppercase tracking-wider mb-1">Audit Stream Idle</h3>
               <p className="text-xs text-slate-400 max-w-xs leading-relaxed">
-                Ingest a land document scan and click "Run Intelligent Pipeline" to trigger OCR parsing, registry validations, and confidence metrics.
+                Ingest a land document scan and click "Run Intelligent Pipeline" or select an existing record from the repository to audit.
               </p>
             </div>
           ) : isProcessing ? (
@@ -201,25 +316,30 @@ export default function App() {
                 
                 {/* Document Overview Summary Box */}
                 <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
-                    Document Analysis Summary
-                  </span>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      Current Record Overview
+                    </span>
+                    <span className="bg-slate-200 text-slate-700 text-[8px] font-extrabold px-1.5 py-0.5 rounded tracking-wide uppercase">
+                      {record!.document_subtype || "General"} ({record!.extraction_method || "keyword"})
+                    </span>
+                  </div>
                   <div className="grid grid-cols-4 gap-2 text-center">
                     <div className="flex flex-col border-r border-slate-200">
                       <span className="text-sm font-extrabold text-slate-800">{fieldsCount}</span>
-                      <span className="text-[9px] text-slate-450 font-bold uppercase mt-0.5">Schema Fields</span>
+                      <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Schema Fields</span>
                     </div>
                     <div className="flex flex-col border-r border-slate-200">
                       <span className="text-sm font-extrabold text-emerald-600">{verifiedCount}</span>
-                      <span className="text-[9px] text-slate-455 font-bold uppercase mt-0.5">Approved</span>
+                      <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Approved</span>
                     </div>
                     <div className="flex flex-col border-r border-slate-200">
                       <span className="text-sm font-extrabold text-amber-600">{needsReviewCount}</span>
-                      <span className="text-[9px] text-slate-455 font-bold uppercase mt-0.5">Needs Review</span>
+                      <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Needs Review</span>
                     </div>
                     <div className="flex flex-col">
                       <span className="text-sm font-extrabold text-blue-600">{avgConfidence}%</span>
-                      <span className="text-[9px] text-slate-455 font-bold uppercase mt-0.5">Avg Conf</span>
+                      <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Avg Conf</span>
                     </div>
                   </div>
                 </div>
@@ -258,7 +378,7 @@ export default function App() {
                   <button
                     onClick={handleApproveDocument}
                     disabled={userRole !== "REGISTRAR"}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-lg transition-all shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer text-xs uppercase tracking-wider disabled:bg-slate-200 disabled:text-slate-450 disabled:cursor-not-allowed"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-lg transition-all shadow-sm hover:shadow flex items-center justify-center gap-1.5 cursor-pointer text-xs uppercase tracking-wider disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed"
                   >
                     <CheckSquare className="w-4 h-4 text-white" />
                     Approve Entire Document

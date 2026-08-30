@@ -9,6 +9,8 @@ from backend.app.explainability.evidence_mapper import EvidenceMapper
 from backend.app.validation.validator import Validator
 from backend.app.confidence.confidence_engine import ConfidenceEngine
 from backend.app.extraction.schemas import ExtractionResult
+from backend.app.extraction.document_classifier import DocumentClassifier
+from backend.app.extraction.llm_extractor import LLMExtractor
 
 # Set up logger
 logging.basicConfig(
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 class DocumentPipeline:
     """
     DocumentPipeline orchestrates the entire intelligence process:
-    Preprocessing -> OCR -> Field Extraction -> Validation -> Confidence.
+    Preprocessing -> OCR -> Classification -> Semantic/LLM Extraction (fallback to Keyword) -> Validation -> Confidence.
     """
     
     def __init__(self, output_dir: str = "data/processed"):
@@ -30,6 +32,8 @@ class DocumentPipeline:
         self.evidence_mapper = EvidenceMapper()
         self.validator = Validator()
         self.confidence_engine = ConfidenceEngine()
+        self.classifier = DocumentClassifier()
+        self.llm_extractor = LLMExtractor()
 
     def process_document(self, file_path: str, preprocess_method: str = "adaptive") -> ExtractionResult:
         """
@@ -76,18 +80,39 @@ class DocumentPipeline:
         logger.info("Step 2/5: Extracting text & coordinates via PaddleOCR...")
         ocr_result = self.ocr_engine.process(preprocessed_path)
 
-        # 4. Field Extraction (Rule-Based & Spatial Patterns)
-        logger.info("Step 3/5: Extracting target land record fields...")
-        extraction_result = self.field_extractor.extract(ocr_result)
+        # Document Classification
+        logger.info("Classifying document subtype...")
+        subtype = self.classifier.classify(ocr_result)
+        logger.info(f"Document classified as: '{subtype}'")
 
-        # Normalize and map coordinates for explainability
-        extraction_result = self.evidence_mapper.map_evidence(
-            extraction_result, 
-            ocr_result.image_width, 
-            ocr_result.image_height
-        )
+        # 4. Field Extraction
+        extraction_result = None
+        if subtype in ["Sale Deed", "Partition Deed"]:
+            logger.info(f"Step 3/5: Attempting LLM semantic extraction for subtype '{subtype}'...")
+            extraction_result = self.llm_extractor.extract(ocr_result, subtype)
+            
+        if extraction_result is None:
+            logger.info(f"Step 3/5: Using keyword/pattern extractor (fallback) with subtype='{subtype}'...")
+            extraction_result = self.field_extractor.extract(ocr_result, subtype=subtype)
+            extraction_result.document_subtype = subtype
+            extraction_result.extraction_method = "keyword"
+            
+            # Normalize and map coordinates for spatial display
+            extraction_result = self.evidence_mapper.map_evidence(
+                extraction_result, 
+                ocr_result.image_width, 
+                ocr_result.image_height
+            )
+        else:
+            logger.info("LLM semantic extraction succeeded.")
+            # Map evidence coords to ensure full frontend alignment compatibility
+            extraction_result = self.evidence_mapper.map_evidence(
+                extraction_result,
+                ocr_result.image_width,
+                ocr_result.image_height
+            )
 
-        # 5. Validation (Format & Mock Registry Verification)
+        # 5. Validation (Format & Subtype Checks)
         logger.info("Step 4/5: Running validation and format checkers...")
         validated_result = self.validator.validate(extraction_result)
 

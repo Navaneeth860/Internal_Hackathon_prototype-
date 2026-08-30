@@ -8,6 +8,7 @@ class DBDocument(Base):
     id = Column(String, primary_key=True, index=True)
     filename = Column(String, nullable=False)
     filepath = Column(String, nullable=False)
+    file_hash = Column(String, nullable=True, unique=True)
     upload_date = Column(DateTime, default=datetime.datetime.utcnow)
 
 class DBRecord(Base):
@@ -15,6 +16,8 @@ class DBRecord(Base):
 
     id = Column(String, primary_key=True, index=True)  # Matches document UUID
     document_type = Column(String, default="Land Record")
+    document_subtype = Column(String, default="Unknown")
+    extraction_method = Column(String, default="keyword")
     image_url = Column(String, nullable=True)
     json_data = Column(Text, nullable=False)  # Stores serialized ExtractionResult JSON
 

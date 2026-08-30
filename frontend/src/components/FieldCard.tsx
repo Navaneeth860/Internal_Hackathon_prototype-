@@ -10,6 +10,8 @@ interface FieldCardProps {
   onSelect: () => void;
   onCorrect: (newValue: string) => Promise<void>;
   onVerify: () => Promise<void>;
+  canCorrect?: boolean;
+  canVerify?: boolean;
 }
 
 export const FieldCard: React.FC<FieldCardProps> = ({
@@ -18,6 +20,8 @@ export const FieldCard: React.FC<FieldCardProps> = ({
   onSelect,
   onCorrect,
   onVerify,
+  canCorrect = true,
+  canVerify = true,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(field.value || "");
@@ -173,17 +177,19 @@ export const FieldCard: React.FC<FieldCardProps> = ({
       <ValidationWarnings warnings={field.validation_warnings} />
 
       {/* Audit Action Controls */}
-      {!isEditing && (
+      {!isEditing && (canCorrect || canVerify) && (
         <div className="flex gap-3 mt-3 pt-2.5 border-t border-slate-100 justify-end" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={() => setIsEditing(true)}
-            disabled={isSubmitting}
-            className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 transition-colors cursor-pointer"
-          >
-            <Edit2 className="w-3 h-3" /> Correct
-          </button>
+          {canCorrect && (
+            <button
+              onClick={() => setIsEditing(true)}
+              disabled={isSubmitting}
+              className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <Edit2 className="w-3 h-3" /> Correct
+            </button>
+          )}
           
-          {field.verification_status !== "VERIFIED" && (
+          {canVerify && field.verification_status !== "VERIFIED" && (
             <button
               onClick={handleVerifyClick}
               disabled={isSubmitting}

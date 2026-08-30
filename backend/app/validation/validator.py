@@ -18,23 +18,31 @@ class Validator:
     def validate(self, extraction_result: ExtractionResult) -> ExtractionResult:
         """
         Executes validation on the extraction result and appends warning messages.
+        Clears old warnings before re-running to avoid stale logs.
         """
         fields = extraction_result.fields
         
-        # Helper maps to quickly lookup extracted values
-        owner_field = next((f for f in fields if f.name == "owner_name"), None)
-        survey_field = next((f for f in fields if f.name == "survey_number"), None)
-        area_field = next((f for f in fields if f.name == "area"), None)
-        village_field = next((f for f in fields if f.name == "village"), None)
-        
-        # 1. Required field checks
-        required_fields = ["owner_name", "survey_number", "village"]
+        # 1. Clear old warnings
         for f in fields:
-            if f.name in required_fields and f.status in ["MISSING", "NOT_PRESENT"]:
+            f.validation_warnings = []
+            
+        # Helper maps to quickly lookup extracted fields
+        fields_map = {f.name: f for f in fields}
+        
+        owner_field = fields_map.get("owner_name")
+        survey_field = fields_map.get("survey_number")
+        area_field = fields_map.get("area")
+        village_field = fields_map.get("village")
+        
+        # 2. Required field checks (universal standard fields)
+        required_fields = ["owner_name", "survey_number", "village"]
+        for name in required_fields:
+            f = fields_map.get(name)
+            if f and f.status in ["MISSING", "NOT_PRESENT"]:
                 f.validation_warnings.append(f"Required Field Warning: Field '{f.name}' is missing but is mandatory for land records.")
                 f.status = "MISSING"
 
-        # 2. Format validation
+        # 3. Format validation (universal)
         if survey_field and survey_field.value:
             survey_warns = rules.validate_survey_format(survey_field.value)
             survey_field.validation_warnings.extend(survey_warns)
@@ -43,7 +51,7 @@ class Validator:
             area_warns = rules.validate_area_unit(area_field.value)
             area_field.validation_warnings.extend(area_warns)
 
-        # 3. Cross-reference registry verification (Bhulekh / land registry simulation)
+        # 4. Cross-reference registry verification (Bhulekh / land registry simulation)
         survey_val = survey_field.value if survey_field else None
         owner_val = owner_field.value if owner_field else None
         village_val = village_field.value if village_field else None
@@ -58,27 +66,56 @@ class Validator:
             if registry_warnings and survey_field:
                 survey_field.validation_warnings.extend(registry_warnings)
 
-        # 4. Subdivision Area Logical Warning Rule
+        # 5. Subdivision Area Logical Warning Rule (universal)
         if survey_field and survey_field.value and area_field and area_field.value:
-            survey_cleaned = survey_field.value.strip().replace(" ", "")
-            if "/" in survey_cleaned:
-                parent_survey = survey_cleaned.split("/")[0]
-                try:
-                    # Extract the first numerical part of the area
-                    area_numbers = re.findall(r"\d+(?:\.\d+)?", area_field.value)
-                    if area_numbers:
-                        extracted_area = float(area_numbers[0])
-                        # If parent survey is 124, sum of registered subdivisions is 1.0 + 0.8 + 0.65 = 2.45
-                        if parent_survey == "124":
-                            subdivisions_sum = 2.45
-                            if abs(extracted_area - subdivisions_sum) > 0.01:
-                                area_field.validation_warnings.append(
-                                    f"Logical Mismatch: Subdivision plot area mismatch. Sum of plots ({subdivisions_sum} acres) does not equal total area ({extracted_area} acres)."
-                                )
-                except Exception as e:
-                    logger.error(f"Failed to execute subdivision check: {e}")
-                
-        # 5. Log validation results
+            subdiv_warns = rules.validate_subdivision_area(survey_field.value, area_field.value)
+            area_field.validation_warnings.extend(subdiv_warns)
+            
+        # 6. Sale Deed Specific Validations
+        if extraction_result.document_subtype == "Sale Deed":
+            seller = fields_map.get("seller_name")
+            buyer = fields_map.get("buyer_name")
+            doc_date = fields_map.get("document_date")
+            consideration = fields_map.get("sale_consideration")
+            
+            seller_val = seller.value if seller else None
+            buyer_val = buyer.value if buyer else None
+            doc_date_val = doc_date.value if doc_date else None
+            consideration_val = consideration.value if consideration else None
+            
+            deed_warns = rules.validate_sale_deed(seller_val, buyer_val, doc_date_val, consideration_val)
+            for warn in deed_warns:
+                if "identical" in warn:
+                    if seller: seller.validation_warnings.append(warn)
+                    if buyer: buyer.validation_warnings.append(warn)
+                elif "date" in warn:
+                    if doc_date: doc_date.validation_warnings.append(warn)
+                elif "consideration" in warn or "monetary" in warn:
+                    if consideration: consideration.validation_warnings.append(warn)
+                    
+        # 7. Partition Deed Specific Validations
+        elif extraction_result.document_subtype == "Partition Deed":
+            parties = fields_map.get("parties")
+            party_count = fields_map.get("party_count")
+            total_area = fields_map.get("total_area")
+            share_allocation = fields_map.get("share_allocation")
+            
+            parties_val = parties.value if parties else None
+            party_count_val = party_count.value if party_count else None
+            total_area_val = total_area.value if total_area else None
+            share_allocation_val = share_allocation.value if share_allocation else None
+            
+            deed_warns = rules.validate_partition_deed(parties_val, party_count_val, total_area_val, share_allocation_val)
+            for warn in deed_warns:
+                if "at least two" in warn:
+                    if parties: parties.validation_warnings.append(warn)
+                elif "Party count" in warn or "listed parties" in warn:
+                    if party_count: party_count.validation_warnings.append(warn)
+                elif "Total area" in warn or "allocated shares" in warn or "allocations" in warn:
+                    if share_allocation: share_allocation.validation_warnings.append(warn)
+                    if total_area: total_area.validation_warnings.append(warn)
+                    
+        # 8. Log validation results
         total_warnings = sum(len(f.validation_warnings) for f in fields)
         logger.info(f"Validation completed. Found {total_warnings} total warning flags.")
         

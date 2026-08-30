@@ -122,3 +122,101 @@ def cross_reference_mock_database(
             )
             
     return warnings
+
+def validate_subdivision_area(survey_no: str, area_val: str) -> List[str]:
+    """
+    Validation check that gets the subdivision plots for a survey number,
+    sums up their areas, and warns if there is a mismatch.
+    """
+    warnings = []
+    if "/" in survey_no:
+        cleaned_survey = survey_no.strip().replace(" ", "")
+        matched_record = None
+        for s_key, data in MOCK_REGISTRY_DATABASE.items():
+            if normalize_string(s_key) == normalize_string(cleaned_survey):
+                matched_record = data
+                break
+                
+        if matched_record and "area_acres" in matched_record:
+            registered_area = matched_record["area_acres"]
+            numbers = re.findall(r"\d+(?:\.\d+)?", area_val)
+            if numbers:
+                try:
+                    val_float = float(numbers[0])
+                    if abs(val_float - registered_area) > 0.01:
+                        warnings.append(
+                            f"Logical Mismatch: Subdivision plot area mismatch. Registered area ({registered_area} acres) does not equal extracted area ({val_float} acres)."
+                        )
+                except ValueError:
+                    pass
+    return warnings
+
+def validate_sale_deed(
+    seller_name: Optional[str], 
+    buyer_name: Optional[str], 
+    doc_date: Optional[str], 
+    consideration: Optional[str]
+) -> List[str]:
+    """
+    Validation checks specific to Sale Deed transactions.
+    """
+    warnings = []
+    if seller_name and buyer_name:
+        if normalize_string(seller_name) == normalize_string(buyer_name):
+            warnings.append("Conflict: Seller and Buyer names cannot be identical in a Sale Deed.")
+            
+    if doc_date:
+        if not re.search(r"\b\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b", doc_date):
+            warnings.append("Format Warning: Document date does not match standard date format (e.g., DD-MM-YYYY).")
+            
+    if consideration:
+        if not re.findall(r"\d+", consideration.replace(",", "").replace(".", "")):
+            warnings.append("Format Warning: Sale consideration lacks a valid numerical monetary amount.")
+            
+    return warnings
+
+def validate_partition_deed(
+    parties: Optional[str],
+    party_count: Optional[str],
+    total_area: Optional[str],
+    share_allocation: Optional[str]
+) -> List[str]:
+    """
+    Validation checks specific to Partition Deed allotments.
+    """
+    warnings = []
+    parsed_parties = []
+    if parties:
+        parts = re.split(r",| and ", parties)
+        parsed_parties = [p.strip() for p in parts if p.strip()]
+        
+        if len(parsed_parties) < 2:
+            warnings.append("Plausibility Warning: Partition Deed must list at least two parties.")
+            
+    if party_count:
+        try:
+            count = int(re.search(r"\d+", party_count).group(0))
+            if len(parsed_parties) > 0 and count != len(parsed_parties):
+                warnings.append(
+                    f"Logical Mismatch: Party count '{count}' does not match the actual listed parties ({len(parsed_parties)})."
+                )
+        except Exception:
+            warnings.append("Format Warning: Party count contains an invalid or non-numeric value.")
+            
+    if total_area and share_allocation:
+        try:
+            total_nums = re.findall(r"\d+(?:\.\d+)?", total_area)
+            share_nums = re.findall(r"\d+(?:\.\d+)?", share_allocation)
+            
+            if total_nums and share_nums:
+                tot_val = float(total_nums[0])
+                shares_sum = sum(float(x) for x in share_nums)
+                if abs(tot_val - shares_sum) > 0.01:
+                    warnings.append(
+                        f"Logical Mismatch: Total area ({tot_val} acres) does not match the sum of partitioned allocations ({shares_sum} acres)."
+                    )
+        except Exception:
+            pass
+            
+    return warnings
+

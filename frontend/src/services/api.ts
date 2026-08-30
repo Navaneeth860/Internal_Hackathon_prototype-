@@ -91,14 +91,3 @@ export async function verifyDocument(recordId: string): Promise<ExtractionResult
   return res.json();
 }
 
-export async function getAuditLogs(recordId: string): Promise<any[]> {
-  const res = await fetch(`${BASE_URL}/records/${recordId}/audit-logs`);
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Failed to fetch audit logs" }));
-    throw new Error(err.detail || "Failed to fetch audit logs");
-  }
-
-  return res.json();
-}
-

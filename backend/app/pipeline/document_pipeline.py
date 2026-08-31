@@ -49,22 +49,40 @@ class DocumentPipeline:
         # 1. Gracefully handle PDF files
         if file_ext == ".pdf":
             logger.info("PDF document detected. Attempting conversion to image...")
+            logger.info("PDF document detected. Converting to image via PyMuPDF...")
             try:
                 from pdf2image import convert_from_path
                 pages = convert_from_path(file_path, dpi=200)
                 if not pages:
                     raise ValueError("PDF file contains no pages.")
                 # Save the first page as a temporary PNG for OCR processing
+                import pymupdf as fitz  # PyMuPDF — no Poppler dependency needed
+                
                 pdf_image_dir = "data/processed/pdf_pages"
                 os.makedirs(pdf_image_dir, exist_ok=True)
                 pdf_image_name = os.path.splitext(os.path.basename(file_path))[0] + "_page1.png"
                 target_image_path = os.path.join(pdf_image_dir, pdf_image_name)
                 pages[0].save(target_image_path, "PNG")
+                
+                doc = fitz.open(file_path)
+                if doc.page_count == 0:
+                    raise ValueError("PDF file contains no pages.")
+                
+                page = doc[0]  # First page
+                # 2x zoom matrix ≈ 200 DPI (default is 72 DPI)
+                mat = fitz.Matrix(2.0, 2.0)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                pix.save(target_image_path)
+                doc.close()
+                
                 logger.info(f"Successfully converted PDF page 1 to: {target_image_path}")
             except ImportError:
                 error_msg = (
                     "PDF processing failed: 'pdf2image' package is not installed or 'poppler' is missing from PATH. "
                     "Please install pdf2image and Poppler, or upload direct image formats (PNG, JPG, JPEG)."
+                raise RuntimeError(
+                    "PDF processing failed: PyMuPDF is not installed. "
+                    "Run: pip install pymupdf"
                 )
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)

@@ -39,10 +39,19 @@ class DocumentPipeline:
         self,
         file_path: str,
         preprocess_method: str = "adaptive",
+        ocr_mode: str = "printed",
     ) -> Tuple[ExtractionResult, str]:
         """
         Runs the end-to-end processing pipeline on a land-record document.
         Supported inputs: PNG, JPG, JPEG, PDF.
+
+        Args:
+            file_path        : Path to the uploaded document.
+            preprocess_method: OpenCV preprocessing method. Defaults to 'adaptive' for
+                               printed docs; automatically overridden to 'handwriting'
+                               when ocr_mode='handwritten'.
+            ocr_mode         : 'printed' (default) — PP-OCRv6, adaptive preprocessing.
+                               'handwritten'         — PP-OCRv5, CLAHE preprocessing.
 
         Returns:
             Tuple of (ExtractionResult, preprocessed_image_path).
@@ -51,6 +60,10 @@ class DocumentPipeline:
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Source file not found: {file_path}")
+
+        # Route preprocessing method based on ocr_mode
+        if ocr_mode == "handwritten" and preprocess_method == "adaptive":
+            preprocess_method = "handwriting"
 
         file_ext = os.path.splitext(file_path)[1].lower()
         target_image_path = file_path
@@ -129,9 +142,14 @@ class DocumentPipeline:
         logger.info(f"Step 1/5: Preprocessing document with method: '{preprocess_method}'...")
         preprocessed_path = self.image_processor.preprocess(target_image_path, method=preprocess_method)
 
-        # 3. OCR (PaddleOCR)
-        logger.info("Step 2/5: Extracting text & coordinates via PaddleOCR...")
-        ocr_result = self.ocr_engine.process(preprocessed_path)
+        # 3. OCR — route to printed (PP-OCRv6) or handwriting (PP-OCRv5) engine
+        if ocr_mode == "handwritten":
+            logger.info("Step 2/5: Extracting text via Handwriting OCR engine (PP-OCRv5)...")
+            hw_engine = HandwritingOCREngine()
+            ocr_result = hw_engine.process(preprocessed_path)
+        else:
+            logger.info("Step 2/5: Extracting text via Printed OCR engine (PP-OCRv6)...")
+            ocr_result = self.ocr_engine.process(preprocessed_path)
 
         # Document Classification
         logger.info("Classifying document subtype...")

@@ -20,11 +20,9 @@ class ImageProcessor:
         """
         Preprocesses the input image and saves it to the output directory.
         Supported methods:
-          - 'grayscale'   : Simple grayscale conversion.
-          - 'adaptive'    : Grayscale + adaptive thresholding (best for faded/shadowed scans).
-          - 'denoise'     : Grayscale + bilateral filtering + Otsu thresholding (best for noisy scans).
-          - 'handwriting' : CLAHE contrast enhancement + mild Gaussian blur (best for photographed
-                            handwritten documents — avoids binarization which destroys ink strokes).
+          - 'grayscale': Simple grayscale conversion.
+          - 'adaptive' : Grayscale + adaptive thresholding (best for faded/shadowed scans).
+          - 'denoise'  : Grayscale + bilateral filtering + Otsu thresholding (best for noisy scans).
 
         Returns:
           str: Path to the processed image file.
@@ -68,19 +66,6 @@ class ImageProcessor:
                 cv2.THRESH_BINARY + cv2.THRESH_OTSU
             )
             logger.info("Applied bilateral filtering + Otsu thresholding preprocessing.")
-
-        elif method == "handwriting":
-            # For photographed handwritten documents:
-            # 1. CLAHE — boosts local contrast so light/faint strokes become visible,
-            #    without over-exposing dense ink regions.
-            # 2. Mild Gaussian blur (3x3) — smooths camera sensor noise without
-            #    destroying letter stroke edges.
-            # We deliberately do NOT binarize: binarization breaks thin cursive strokes
-            # and causes PP-OCRv5 to miss characters.
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(gray)
-            processed = cv2.GaussianBlur(enhanced, (3, 3), 0)
-            logger.info("Applied CLAHE + Gaussian blur preprocessing for handwriting.")
 
         else:
             logger.warning(f"Unknown preprocessing method '{method}'. Falling back to grayscale.")

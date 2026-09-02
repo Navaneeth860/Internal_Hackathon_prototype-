@@ -115,22 +115,12 @@ def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db))
 @router.post("/documents/{document_id}/process")
 def process_document(
     document_id: str,
-    ocr_mode: str = "printed",
     db: Session = Depends(get_db),
 ):
     """
     Processes the uploaded document using the DocumentPipeline.
     Stores the resulting ExtractionResult in the records database.
-
-    Query params:
-      ocr_mode: 'printed' (default, PP-OCRv6) or 'handwritten' (PP-OCRv5).
     """
-    if ocr_mode not in ("printed", "handwritten"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid ocr_mode '{ocr_mode}'. Must be 'printed' or 'handwritten'."
-        )
-
     # Fetch file path from database
     db_doc = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not db_doc:
@@ -141,10 +131,7 @@ def process_document(
 
     try:
         pipeline = DocumentPipeline()
-        result, preprocessed_path = pipeline.process_document(
-            db_doc.filepath,
-            ocr_mode=ocr_mode,
-        )
+        result, preprocessed_path = pipeline.process_document(db_doc.filepath)
 
         # Build web-accessible image URL from the ACTUAL preprocessed file on disk.
         # For PNG/JPG: data/processed/{name}_processed_{mode}.png
@@ -176,7 +163,7 @@ def process_document(
         db.commit()
 
         logger.info(
-            f"Processed document '{document_id}' [ocr_mode={ocr_mode}]. "
+            f"Processed document '{document_id}'. "
             f"Image URL: {image_url}"
         )
         return result

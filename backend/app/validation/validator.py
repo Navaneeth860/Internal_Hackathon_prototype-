@@ -29,18 +29,22 @@ class Validator:
         # Helper maps to quickly lookup extracted fields
         fields_map = {f.name: f for f in fields}
         
-        owner_field = fields_map.get("owner_name")
+        owner_field = fields_map.get("owner_name") or fields_map.get("seller_name")
         survey_field = fields_map.get("survey_number")
-        area_field = fields_map.get("area")
-        village_field = fields_map.get("village")
+        area_field = fields_map.get("area") or fields_map.get("total_area")
+        village_field = fields_map.get("village") or fields_map.get("property_location")
         
         # 2. Required field checks (universal standard fields)
-        required_fields = ["owner_name", "survey_number", "village"]
-        for name in required_fields:
+        if owner_field and owner_field.status in ["MISSING", "NOT_PRESENT"]:
+            owner_field.validation_warnings.append(f"Required Field Warning: Field '{owner_field.name}' is missing but is mandatory for land records.")
+            owner_field.status = "MISSING"
+
+        for name in ["survey_number", "village"]:
             f = fields_map.get(name)
             if f and f.status in ["MISSING", "NOT_PRESENT"]:
                 f.validation_warnings.append(f"Required Field Warning: Field '{f.name}' is missing but is mandatory for land records.")
                 f.status = "MISSING"
+
 
         # 3. Format validation (universal)
         if survey_field and survey_field.value:

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import type { ExtractedField } from "../types/api";
 import { ZoomIn, ZoomOut, Maximize2, Minimize2, Image as ImageIcon } from "lucide-react";
 
@@ -17,15 +17,16 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
 }) => {
   const [zoom, setZoom] = useState<number>(100);
   const [fit, setFit] = useState<boolean>(true);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   const handleZoomIn = () => {
     setFit(false);
-    setZoom((prev) => Math.min(prev + 10, 200));
+    setZoom((prev) => Math.min(prev + 25, 400));
   };
 
   const handleZoomOut = () => {
     setFit(false);
-    setZoom((prev) => Math.max(prev - 10, 50));
+    setZoom((prev) => Math.max(prev - 25, 25));
   };
 
   const handleFit = () => {
@@ -61,24 +62,26 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           <ImageIcon className="w-3.5 h-3.5 text-blue-600" />
           Document Canvas
         </span>
-        
+
         <div className="flex items-center gap-1.5">
           <button
             onClick={handleZoomOut}
             title="Zoom Out"
-            className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer"
+            disabled={!fit && zoom <= 25}
+            className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer disabled:opacity-40"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
-          
-          <span className="text-[11px] font-mono font-bold text-slate-600 min-w-[36px] text-center">
+
+          <span className="text-[11px] font-mono font-bold text-slate-600 min-w-[40px] text-center">
             {fit ? "Fit" : `${zoom}%`}
           </span>
 
           <button
             onClick={handleZoomIn}
             title="Zoom In"
-            className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer"
+            disabled={!fit && zoom >= 400}
+            className="p-1 rounded text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors cursor-pointer disabled:opacity-40"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
@@ -89,8 +92,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             onClick={handleFit}
             title="Fit to Container"
             className={`p-1 rounded transition-colors cursor-pointer ${
-              fit 
-                ? "bg-blue-50 text-blue-600 font-bold" 
+              fit
+                ? "bg-blue-50 text-blue-600 font-bold"
                 : "text-slate-500 hover:text-slate-800 hover:bg-slate-200"
             }`}
           >
@@ -101,8 +104,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             onClick={handleActualSize}
             title="Actual Size (100%)"
             className={`p-1 rounded transition-colors cursor-pointer ${
-              !fit && zoom === 100 
-                ? "bg-blue-50 text-blue-600 font-bold" 
+              !fit && zoom === 100
+                ? "bg-blue-50 text-blue-600 font-bold"
                 : "text-slate-500 hover:text-slate-800 hover:bg-slate-200"
             }`}
           >
@@ -111,23 +114,38 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
         </div>
       </div>
 
-      {/* Document Viewport Wrapper */}
-      <div className="bg-slate-100 p-5 flex items-center justify-center min-h-[500px] max-h-[600px] overflow-auto">
-        <div 
-          className="relative border border-slate-350 shadow-md rounded overflow-hidden bg-white transition-all duration-200"
-          style={{
-            width: fit ? "100%" : `${zoom}%`,
-            maxWidth: fit ? "100%" : "none",
-          }}
+      {/* Document Viewport — scrollable when zoomed in */}
+      <div
+        ref={viewportRef}
+        className="bg-slate-100 overflow-auto"
+        style={{ minHeight: "500px", maxHeight: "650px" }}
+      >
+        {/* Inner wrapper: fit mode = full width constrained; zoom mode = explicit scaled size */}
+        <div
+          className="relative inline-block shadow-md rounded overflow-hidden bg-white"
+          style={
+            fit
+              ? { width: "100%", display: "block" }
+              : {
+                  // Scale from top-left so scrolling to the zoomed area is natural
+                  transformOrigin: "top left",
+                  transform: `scale(${zoom / 100})`,
+                  // Reserve the post-scale space so the scroll container knows the size
+                  width: `${(100 / zoom) * 100}%`,
+                  marginLeft: "auto",
+                  marginRight: "auto",
+                }
+          }
         >
           {/* Preprocessed document image */}
           <img
             src={fullImageUrl}
             alt="Preprocessed Land Record"
             className="w-full h-auto block select-none"
+            draggable={false}
           />
 
-          {/* SVG Bounding Box Overlays */}
+          {/* SVG Bounding Box Overlays — viewBox 0 0 1 1 with normalized coords */}
           <svg
             viewBox="0 0 1 1"
             preserveAspectRatio="none"
@@ -136,15 +154,11 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
             {fields.map((field) => {
               const isSelected = field.name === selectedFieldName;
               const hasSelection = selectedFieldName !== null;
-              
-              // Dim unrelated coordinates if a specific field is active
-              const dimClass = hasSelection && !isSelected 
-                ? "opacity-25" 
-                : "opacity-100";
+              const dimClass = hasSelection && !isSelected ? "opacity-20" : "opacity-100";
 
               return field.source_elements.map((element, elIdx) => {
                 if (!element.normalized_bbox) return null;
-                
+
                 const points = element.normalized_bbox
                   .map(([x, y]) => `${x},${y}`)
                   .join(" ");
@@ -160,7 +174,7 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
                     }`}
                     onClick={() => onFieldSelect(field.name)}
                   >
-                    <title>{`${field.name.replace("_", " ").toUpperCase()}: ${element.text}`}</title>
+                    <title>{`${field.name.replace(/_/g, " ").toUpperCase()}: ${element.text}`}</title>
                   </polygon>
                 );
               });
@@ -168,10 +182,10 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
           </svg>
         </div>
       </div>
-      
+
       <div className="bg-slate-50 border-t border-slate-200 px-4 py-2 text-[10px] text-slate-400 font-medium flex items-center justify-between">
-        <span>💡 Clicking region locks highlight; Hover polygon shows schema name.</span>
-        <span>Resolution: 100% Aspect Scaled</span>
+        <span>💡 Click a region to highlight the field. Hover shows the schema name.</span>
+        <span>{fit ? "Fit Mode" : `Zoom: ${zoom}%`}</span>
       </div>
     </div>
   );

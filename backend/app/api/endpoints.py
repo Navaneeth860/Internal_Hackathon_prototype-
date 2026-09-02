@@ -113,11 +113,24 @@ def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db))
         )
 
 @router.post("/documents/{document_id}/process")
-def process_document(document_id: str, db: Session = Depends(get_db)):
+def process_document(
+    document_id: str,
+    ocr_mode: str = "printed",
+    db: Session = Depends(get_db),
+):
     """
-    Processes the uploaded document using the existing Phase 1+2 DocumentPipeline.
-    Stores and indexes the resulting ExtractionResult in the records database.
+    Processes the uploaded document using the DocumentPipeline.
+    Stores the resulting ExtractionResult in the records database.
+
+    Query params:
+      ocr_mode: 'printed' (default, PP-OCRv6) or 'handwritten' (PP-OCRv5).
     """
+    if ocr_mode not in ("printed", "handwritten"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid ocr_mode '{ocr_mode}'. Must be 'printed' or 'handwritten'."
+        )
+
     # Fetch file path from database
     db_doc = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not db_doc:
@@ -125,16 +138,22 @@ def process_document(document_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with ID '{document_id}' not found."
         )
-        
+
     try:
         pipeline = DocumentPipeline()
-        result = pipeline.process_document(db_doc.filepath)
-        
-        # Build dynamic web-accessible image path
-        processed_filename = f"{document_id}_processed_adaptive.png"
-        image_url = f"/data/processed/{processed_filename}"
+        result, preprocessed_path = pipeline.process_document(
+            db_doc.filepath,
+            ocr_mode=ocr_mode,
+        )
+
+        # Build web-accessible image URL from the ACTUAL preprocessed file on disk.
+        # For PNG/JPG: data/processed/{name}_processed_{mode}.png
+        # For PDF:     data/processed/{pdfname}_all_pages_processed_{mode}.png
+        # Both served under the /data/processed static mount.
+        preprocessed_filename = os.path.basename(preprocessed_path)
+        image_url = f"/data/processed/{preprocessed_filename}"
         result.image_url = image_url
-        
+
         # Link the record directly to the document_id and save
         db_record = db.query(DBRecord).filter(DBRecord.id == document_id).first()
         if db_record:
@@ -153,10 +172,13 @@ def process_document(document_id: str, db: Session = Depends(get_db)):
                 json_data=result.model_dump_json()
             )
             db.add(db_record)
-        
+
         db.commit()
-        
-        logger.info(f"Successfully processed document '{document_id}'. Saved record. Image URL: {image_url}")
+
+        logger.info(
+            f"Processed document '{document_id}' [ocr_mode={ocr_mode}]. "
+            f"Image URL: {image_url}"
+        )
         return result
     except Exception as e:
         logger.error(f"Processing failed for document '{document_id}': {e}")
@@ -165,6 +187,7 @@ def process_document(document_id: str, db: Session = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Document processing failed: {str(e)}"
         )
+
 
 @router.get("/records")
 def get_records(db: Session = Depends(get_db)):

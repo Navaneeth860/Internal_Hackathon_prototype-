@@ -3,6 +3,9 @@ export interface OCRElement {
   confidence: number;
   bbox: [number, number][];
   normalized_bbox?: [number, number][];
+  page?: number | null;
+  ocr_language?: string | null;
+  ocr_model?: string | null;
 }
 
 export interface ExtractedField {
@@ -24,6 +27,8 @@ export interface ExtractionResult {
   document_type: string;
   document_subtype?: string;
   extraction_method?: string;
+  detected_language?: string;
+  ocr_languages?: string[];
   image_url: string | null;
 }
 
@@ -32,4 +37,3 @@ export interface UploadResponse {
   filename: string;
   status: string;
 }
-

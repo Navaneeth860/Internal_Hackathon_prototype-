@@ -20,8 +20,9 @@ export async function uploadDocument(file: File): Promise<UploadResponse> {
   return res.json();
 }
 
-export async function processDocument(documentId: string): Promise<ExtractionResult> {
-  const res = await fetch(`${BASE_URL}/documents/${documentId}/process`, {
+export async function processDocument(documentId: string, ocrLanguage: "auto" | "en" | "ka" = "auto"): Promise<ExtractionResult> {
+  const params = new URLSearchParams({ ocr_language: ocrLanguage });
+  const res = await fetch(`${BASE_URL}/documents/${documentId}/process?${params}`, {
     method: "POST",
   });
 

@@ -14,7 +14,8 @@ def normalize_text(text: str) -> str:
     """
     Helper to normalize text for alignment matches.
     """
-    return re.sub(r"[^a-z0-9]", "", text.lower())
+    # Keep Unicode letters so Kannada values can be aligned to OCR evidence.
+    return re.sub(r"[^\w]", "", text.casefold(), flags=re.UNICODE)
 
 class LLMExtractor:
     """
@@ -65,6 +66,8 @@ class LLMExtractor:
             "5. If a field is genuinely absent from the text, set its value to null.\n"
             "6. If a field is ambiguous or unclear, set its value to 'UNCERTAIN'.\n"
             "7. Do NOT invent or hallucinate values not present in the text.\n\n"
+            "8. The document may contain Kannada, English names, and numerals. Preserve "
+            "the original Unicode spelling of values; do not transliterate it.\n\n"
             "Target Fields Schema:\n"
             f"{fields_bullet_list}\n\n"
             f"Document Text:\n{ocr_text[:4000]}\n\n"
@@ -232,4 +235,3 @@ class LLMExtractor:
                         matched.append(el)
                         
         return matched
-

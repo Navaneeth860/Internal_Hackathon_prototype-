@@ -33,6 +33,17 @@ PARTITION_DEED_KEYWORDS = [
     r"\ballotted share\b"
 ]
 
+# Karnataka sale-deed headings and terms. A document must contain more than a
+# heading alone before it is classified as a Kannada Sale Deed.
+KANNADA_SALE_DEED_KEYWORDS = [
+    "ಮಾರಾಟ ಪತ್ರ", "ಮಾರಾಟದ ಪತ್ರ", "ಕ್ರಯಪತ್ರ", "ಕ್ರಯ ಪತ್ರ",
+    "ಮಾರಾಟ ದಸ್ತಾವೇಜು", "ಮಾರಾಟದ ದಸ್ತಾವೇಜು", "ಕ್ರಯದ ದಸ್ತಾವೇಜು",
+]
+KANNADA_SALE_CONTEXT = [
+    "ಮಾರಾಟ", "ಕ್ರಯ", "ಮಾರಾಟದ ಮೊತ್ತ", "ಮಾರಾಟದ ಪರಿಗಣನೆ", "ಖಾತೆ",
+    "ಸರ್ವೇ", "ಹಿಸ್ಸಾ", "ಖರೀದಿದಾರ", "ಮಾರಾಟಗಾರ", "ನೋಂದಣಿ",
+]
+
 class DocumentClassifier:
     """
     DocumentClassifier uses a two-level classification strategy:
@@ -54,10 +65,18 @@ class DocumentClassifier:
         # Level 1: Deterministic heuristic checks
         sale_hits = sum(1 for kw in SALE_DEED_KEYWORDS if re.search(kw, text_lower))
         partition_hits = sum(1 for kw in PARTITION_DEED_KEYWORDS if re.search(kw, text_lower))
+        kannada_heading_hits = sum(1 for kw in KANNADA_SALE_DEED_KEYWORDS if kw in ocr_text)
+        kannada_context_hits = sum(1 for kw in KANNADA_SALE_CONTEXT if kw in ocr_text)
         
-        logger.info(f"Classifier heuristics: Sale Deed hits={sale_hits}, Partition Deed hits={partition_hits}")
+        logger.info(
+            "Classifier heuristics: Sale=%s, Partition=%s, Kannada heading=%s, Kannada context=%s",
+            sale_hits, partition_hits, kannada_heading_hits, kannada_context_hits,
+        )
         
         # If we have strong signal (at least 2 distinct keywords), use heuristic directly
+        if kannada_heading_hits >= 1 and kannada_context_hits >= 2:
+            logger.info("Classified as Kannada Sale Deed via Level 1 heuristics.")
+            return "Kannada Sale Deed"
         if sale_hits >= 2 and sale_hits > partition_hits:
             logger.info("Classified as Sale Deed via Level 1 heuristics.")
             return "Sale Deed"
@@ -82,6 +101,7 @@ class DocumentClassifier:
             prompt = (
                 "You are an expert legal assistant. Classify the following land record document text into exactly one of these types:\n"
                 "- Sale Deed\n"
+                "- Kannada Sale Deed\n"
                 "- Partition Deed\n"
                 "- Unknown\n\n"
                 "Respond with ONLY the classification name, nothing else. No preamble, no explanation, no markdown formatting.\n\n"
@@ -92,6 +112,8 @@ class DocumentClassifier:
             response_text = response.get("response", "").strip()
             logger.info(f"LLM Classifier Response: '{response_text}'")
             
+            if "kannada sale deed" in response_text.lower():
+                return "Kannada Sale Deed"
             if "sale deed" in response_text.lower():
                 return "Sale Deed"
             elif "partition deed" in response_text.lower():
@@ -101,4 +123,3 @@ class DocumentClassifier:
         except Exception as e:
             logger.warning(f"Ollama classification failed (Ollama server might be offline): {e}")
             return "Unknown"
-

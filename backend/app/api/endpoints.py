@@ -116,6 +116,7 @@ def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db))
 def process_document(
     document_id: str,
     ocr_mode: str = "printed",
+    ocr_language: str = "auto",
     db: Session = Depends(get_db),
 ):
     """
@@ -129,6 +130,11 @@ def process_document(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid ocr_mode '{ocr_mode}'. Must be 'printed' or 'handwritten'."
+        )
+    if ocr_language not in ("auto", "en", "ka"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid ocr_language. Must be 'auto', 'en', or 'ka'."
         )
 
     # Fetch file path from database
@@ -144,6 +150,7 @@ def process_document(
         result, preprocessed_path = pipeline.process_document(
             db_doc.filepath,
             ocr_mode=ocr_mode,
+            ocr_language=ocr_language,
         )
 
         # Build web-accessible image URL from the ACTUAL preprocessed file on disk.

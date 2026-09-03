@@ -1,9 +1,10 @@
 import os
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from backend.app.preprocessing.image_processor import ImageProcessor
 from backend.app.ocr.paddle_ocr import PaddleOCREngine
+from backend.app.ocr.tesseract_ocr import TesseractOCREngine
 from backend.app.extraction.field_extractor import FieldExtractor
 from backend.app.explainability.evidence_mapper import EvidenceMapper
 from backend.app.validation.validator import Validator
@@ -11,6 +12,8 @@ from backend.app.confidence.confidence_engine import ConfidenceEngine
 from backend.app.extraction.schemas import ExtractionResult
 from backend.app.extraction.document_classifier import DocumentClassifier
 from backend.app.extraction.llm_extractor import LLMExtractor
+from backend.app.ocr.language_detection import detect_language, has_meaningful_kannada
+from backend.app.ocr.ocr_models import OCRElement, OCRResult
 
 # Set up logger
 logging.basicConfig(
@@ -35,11 +38,62 @@ class DocumentPipeline:
         self.classifier = DocumentClassifier()
         self.llm_extractor = LLMExtractor()
 
+    @staticmethod
+    def _needs_kannada_probe(result: OCRResult) -> bool:
+        """Avoid a second OCR pass for clearly readable English documents."""
+        text = " ".join(element.text for element in result.elements)
+        english_legal_markers = ("deed", "sale", "partition", "survey", "owner", "village")
+        avg_confidence = (
+            sum(element.confidence for element in result.elements) / len(result.elements)
+            if result.elements else 0.0
+        )
+        return (
+            detect_language(result.elements) != "English"
+            or avg_confidence < 0.72
+            or not any(marker in text.lower() for marker in english_legal_markers)
+        )
+
+    @staticmethod
+    def _bbox_center(element: OCRElement) -> Tuple[float, float]:
+        return (
+            sum(point[0] for point in element.bbox) / len(element.bbox),
+            sum(point[1] for point in element.bbox) / len(element.bbox),
+        )
+
+    def _merge_kannada_and_english(self, english: OCRResult, kannada: OCRResult) -> OCRResult:
+        """Choose Kannada text for Kannada lines and English text for other lines."""
+        selected: List[OCRElement] = list(english.elements)
+        for kannada_element in kannada.elements:
+            if not has_meaningful_kannada([kannada_element]):
+                continue
+            kx, ky = self._bbox_center(kannada_element)
+            nearest_index = None
+            nearest_distance = float("inf")
+            for index, english_element in enumerate(selected):
+                ex, ey = self._bbox_center(english_element)
+                distance = abs(kx - ex) + abs(ky - ey)
+                if distance < nearest_distance:
+                    nearest_index, nearest_distance = index, distance
+            if nearest_index is not None and nearest_distance < 45:
+                selected[nearest_index] = kannada_element
+            else:
+                selected.append(kannada_element)
+
+        selected.sort(key=lambda element: (min(point[1] for point in element.bbox), min(point[0] for point in element.bbox)))
+        return OCRResult(
+            elements=selected,
+            image_width=english.image_width,
+            image_height=english.image_height,
+            detected_language=detect_language(selected),
+            ocr_languages=["en", "ka"],
+        )
+
     def process_document(
         self,
         file_path: str,
         preprocess_method: str = "adaptive",
         ocr_mode: str = "printed",
+        ocr_language: str = "auto",
     ) -> Tuple[ExtractionResult, str]:
         """
         Runs the end-to-end processing pipeline on a land-record document.
@@ -60,10 +114,17 @@ class DocumentPipeline:
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Source file not found: {file_path}")
+        if ocr_language not in {"auto", "en", "ka"}:
+            raise ValueError("ocr_language must be 'auto', 'en', or 'ka'.")
 
         # Route preprocessing method based on ocr_mode
         if ocr_mode == "handwritten" and preprocess_method == "adaptive":
             preprocess_method = "handwriting"
+        elif ocr_language == "ka" and preprocess_method == "adaptive":
+            # Adaptive binarisation can erase Kannada vowel marks and joined
+            # glyphs. Preserve the original printed strokes for the Kannada
+            # recognizer in the demo route.
+            preprocess_method = "grayscale"
 
         file_ext = os.path.splitext(file_path)[1].lower()
         target_image_path = file_path
@@ -83,7 +144,9 @@ class DocumentPipeline:
                 if doc.page_count == 0:
                     raise ValueError("PDF file contains no pages.")
 
-                mat = fitz.Matrix(2.0, 2.0)  # ~200 DPI
+                # 300 DPI improves recognition of dense Kannada legal text and
+                # its combining vowel marks. PyMuPDF uses 72 DPI as its base.
+                mat = fitz.Matrix(4.17, 4.17)
                 page_arrays = []
 
                 for page_num in range(doc.page_count):
@@ -142,23 +205,50 @@ class DocumentPipeline:
         logger.info(f"Step 1/5: Preprocessing document with method: '{preprocess_method}'...")
         preprocessed_path = self.image_processor.preprocess(target_image_path, method=preprocess_method)
 
-        # 3. OCR — route to printed (PP-OCRv6) or handwriting (PP-OCRv5) engine
-        if ocr_mode == "handwritten":
-            logger.info("Step 2/5: Extracting text via Handwriting OCR engine (PP-OCRv5)...")
-            hw_engine = HandwritingOCREngine()
-            ocr_result = hw_engine.process(preprocessed_path)
-        else:
-            logger.info("Step 2/5: Extracting text via Printed OCR engine (PP-OCRv6)...")
-            ocr_result = self.ocr_engine.process(preprocessed_path)
+        # 3. OCR — run PaddleOCR (English) first for document classification;
+        #         if Kannada is detected, re-run with Tesseract (kan+eng LSTM)
+        logger.info("Step 2/5: Extracting text via PaddleOCR (English probe)...")
+        english_result = self.ocr_engine.process(preprocessed_path, language="en")
+        english_result.detected_language = detect_language(english_result.elements)
+        ocr_result = english_result
 
-        # Document Classification
-        logger.info("Classifying document subtype...")
-        subtype = self.classifier.classify(ocr_result)
+        # Quick classification on English OCR to check if it's a Kannada document
+        quick_subtype = self.classifier.classify(english_result)
+        logger.info("Quick classifier result on English OCR: '%s'", quick_subtype)
+
+        is_kannada_doc = (
+            ocr_language == "ka"
+            or quick_subtype == "Kannada Sale Deed"
+            or self._needs_kannada_probe(english_result)
+        )
+
+        if is_kannada_doc:
+            logger.info(
+                "Step 2b/5: Kannada document detected. "
+                "Switching to Tesseract LSTM (kan+eng) for accurate Kannada OCR..."
+            )
+            tess_engine = TesseractOCREngine()
+            ocr_result = tess_engine.process(preprocessed_path)
+            ocr_result.detected_language = "Kannada"
+            logger.info(
+                "Tesseract OCR complete. %d tokens extracted.", len(ocr_result.elements)
+            )
+
+        # Classification on the best OCR result
+        if ocr_language == "ka" or quick_subtype == "Kannada Sale Deed":
+            subtype = "Kannada Sale Deed"
+            logger.info("Document subtype set to: 'Kannada Sale Deed'")
+        else:
+            logger.info("Classifying document subtype...")
+            subtype = self.classifier.classify(ocr_result)
         logger.info(f"Document classified as: '{subtype}'")
 
 
         # 4. Field Extraction
         extraction_result = None
+        # The local LLM is not allowed to infer Kannada values without direct
+        # OCR evidence; deterministic extraction returns missing fields rather
+        # than plausible-looking fabricated values.
         if subtype in ["Sale Deed", "Partition Deed"]:
             logger.info(f"Step 3/5: Attempting LLM semantic extraction for subtype '{subtype}'...")
             extraction_result = self.llm_extractor.extract(ocr_result, subtype)
@@ -183,6 +273,9 @@ class DocumentPipeline:
                 ocr_result.image_width,
                 ocr_result.image_height
             )
+
+        extraction_result.detected_language = ocr_result.detected_language
+        extraction_result.ocr_languages = ocr_result.ocr_languages
 
         # 5. Validation (Format & Subtype Checks)
         logger.info("Step 4/5: Running validation and format checkers...")

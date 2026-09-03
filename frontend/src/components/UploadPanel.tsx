@@ -18,6 +18,7 @@ export const UploadPanel: React.FC<UploadPanelProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [docId, setDocId] = useState<string | null>(null);
+  const [ocrLanguage, setOcrLanguage] = useState<"auto" | "en" | "ka">("auto");
   const [error, setError] = useState<string | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,7 +59,7 @@ export const UploadPanel: React.FC<UploadPanelProps> = ({
 
     try {
       const { processDocument } = await import("../services/api");
-      const result = await processDocument(docId);
+      const result = await processDocument(docId, ocrLanguage);
       onProcessSuccess(result);
     } catch (err: any) {
       setError(err.message || "Failed to process document.");
@@ -107,6 +108,20 @@ export const UploadPanel: React.FC<UploadPanelProps> = ({
               />
             </label>
 
+            <label className="flex flex-col gap-1 text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+              Document language
+              <select
+                value={ocrLanguage}
+                onChange={(e) => setOcrLanguage(e.target.value as "auto" | "en" | "ka")}
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case text-slate-700 outline-none focus:border-blue-500"
+              >
+                <option value="auto">Auto detect (recommended)</option>
+                <option value="en">English</option>
+                <option value="ka">Kannada Sale Deed</option>
+              </select>
+              <span className="normal-case font-medium text-slate-400">For this, Kannada forces the Karnataka Sale Deed schema and prevents Partition Deed guesses.</span>
+            </label>
+
             {file && (
               <button
                 onClick={handleUpload}
@@ -137,6 +152,7 @@ export const UploadPanel: React.FC<UploadPanelProps> = ({
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                   Uploaded and Ready
                 </div>
+                <span className="text-[10px] text-slate-500 mt-1">OCR language: <strong>{ocrLanguage === "ka" ? "Kannada Sale Deed" : ocrLanguage === "en" ? "English" : "Auto detect"}</strong></span>
               </div>
             </div>
 

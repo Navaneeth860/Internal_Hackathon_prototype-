@@ -238,7 +238,7 @@ export const FieldCard: React.FC<FieldCardProps> = ({
                   {field.source_elements.map((el, index) => (
                     <div key={index} className="bg-white border border-slate-200 p-1.5 rounded font-mono text-[9px] break-all flex justify-between shadow-sm">
                       <span className="text-slate-700">"{el.text}"</span>
-                      <span className="text-blue-600 font-bold ml-2">Conf: {Math.round(el.confidence * 100)}%</span>
+                      <span className="text-blue-600 font-bold ml-2 whitespace-nowrap">{el.ocr_language ? `${el.ocr_language.toUpperCase()} • ` : ""}Conf: {Math.round(el.confidence * 100)}%</span>
                     </div>
                   ))}
                 </div>

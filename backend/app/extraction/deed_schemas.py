@@ -76,6 +76,25 @@ SALE_DEED_FIELDS = [
     )
 ]
 
+# Kept separate so the established English Sale Deed response remains stable.
+# The extractor uses these fields only for the explicit Kannada Sale Deed type.
+KANNADA_SALE_DEED_FIELDS = [
+    FieldSpec("document_date", "The date on which the sale deed was executed, usually in DD-MM-YYYY format.", "15-06-2025"),
+    FieldSpec("seller_name", "The name of the vendor or seller transferring the property.", "ಮಾರಾಟಗಾರ"),
+    FieldSpec("seller_address", "The address of the seller/vendor as stated in the deed.", "ಮಾರಾಟಗಾರರ ವಿಳಾಸ"),
+    FieldSpec("buyer_name", "The name of the purchaser or buyer acquiring the property.", "ಖರೀದಿದಾರ"),
+    FieldSpec("buyer_address", "The address of the buyer/purchaser as stated in the deed.", "ಖರೀದಿದಾರರ ವಿಳಾಸ"),
+    FieldSpec("khata_number", "Khata number of the land property.", "456"),
+    FieldSpec("survey_number", "The official survey number or plot number of the land record.", "124/3"),
+    FieldSpec("area", "The size or area of the property, including units.", "2.45 Acres"),
+    FieldSpec("road", "Road or street name where property is located.", "Main Road"),
+    FieldSpec("village", "The village or locality where the property is located.", "Bengaluru"),
+    FieldSpec("taluk", "Taluk name.", "Bengaluru South"),
+    FieldSpec("district", "The name of the district.", "Bengaluru Urban"),
+    FieldSpec("city", "City name.", "Bengaluru"),
+    FieldSpec("state", "State name.", "Karnataka"),
+]
+
 PARTITION_DEED_FIELDS = [
     FieldSpec(
         "document_date",
@@ -131,6 +150,6 @@ PARTITION_DEED_FIELDS = [
 
 DOCUMENT_TYPE_SCHEMAS = {
     "Sale Deed": [f.to_dict() for f in SALE_DEED_FIELDS],
+    "Kannada Sale Deed": [f.to_dict() for f in KANNADA_SALE_DEED_FIELDS],
     "Partition Deed": [f.to_dict() for f in PARTITION_DEED_FIELDS]
 }
-

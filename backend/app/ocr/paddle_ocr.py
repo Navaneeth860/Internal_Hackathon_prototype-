@@ -6,36 +6,37 @@ os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
 
 import cv2
 import logging
-from typing import List, Tuple
+from typing import Dict, List
 from backend.app.ocr.ocr_models import OCRElement, OCRResult
 
 logger = logging.getLogger(__name__)
 
 # Lazy initialization flag
-_ocr_instance = None
+_ocr_instances: Dict[str, object] = {}
 
-def get_ocr_engine():
+def get_ocr_engine(language: str = "en"):
     """
     Lazy-initializes and returns a singleton instance of PaddleOCR
     to avoid initialization overhead when importing modules.
     """
-    global _ocr_instance
-    if _ocr_instance is None:
+    if language not in _ocr_instances:
         try:
             from paddleocr import PaddleOCR as RealPaddleOCR
             # use_textline_orientation=True replaces deprecated use_angle_cls
             # enable_mkldnn=False bypasses OneDNN crash on Windows CPU
             logger.info("Initializing PaddleOCR engine...")
-            _ocr_instance = RealPaddleOCR(
-                use_textline_orientation=True, 
-                lang='en',
+            _ocr_instances[language] = RealPaddleOCR(
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False, 
+                lang=language,
                 enable_mkldnn=False
             )
-            logger.info("PaddleOCR engine initialized successfully.")
+            logger.info("PaddleOCR engine initialized successfully for language '%s'.", language)
         except Exception as e:
             logger.error(f"Failed to initialize PaddleOCR: {e}")
             raise e
-    return _ocr_instance
+    return _ocr_instances[language]
 
 class PaddleOCREngine:
     """
@@ -47,7 +48,7 @@ class PaddleOCREngine:
         # The engine will lazy load when process() is called
         pass
         
-    def process(self, image_path: str) -> OCRResult:
+    def process(self, image_path: str, language: str = "en") -> OCRResult:
         """
         Runs OCR on the given image.
         Returns a structured OCRResult.
@@ -62,7 +63,9 @@ class PaddleOCREngine:
         height, width, _ = img.shape
         
         # Run OCR
-        engine = get_ocr_engine()
+        if language not in {"en", "ka"}:
+            raise ValueError(f"Unsupported OCR language '{language}'.")
+        engine = get_ocr_engine(language)
         
         try:
             # Do not pass cls=True as it is unsupported in this Paddlex-based predict() wrapper
@@ -91,12 +94,16 @@ class PaddleOCREngine:
                 elements.append(OCRElement(
                     text=text.strip(),
                     confidence=float(conf),
-                    bbox=bbox_formatted
+                    bbox=bbox_formatted,
+                    page=1,
+                    ocr_language=language,
+                    ocr_model=("PP-OCRv6 English" if language == "en" else "ka_PP-OCRv3_mobile_rec")
                 ))
                 
         logger.info(f"OCR processing completed. Found {len(elements)} text blocks.")
         return OCRResult(
             elements=elements,
             image_width=width,
-            image_height=height
+            image_height=height,
+            ocr_languages=[language]
         )

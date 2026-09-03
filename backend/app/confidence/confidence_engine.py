@@ -60,7 +60,7 @@ class ConfidenceEngine:
             is_direct = "directly" in (field.explanation or "")
             is_spatial = "spatial" in (field.explanation or "") or "neighbor" in (field.explanation or "")
             
-            if not is_direct and document_subtype in ["Sale Deed", "Partition Deed"]:
+            if not is_direct and document_subtype in ["Sale Deed", "Kannada Sale Deed", "Partition Deed"]:
                 # Pattern matching on legal prose is inherently less reliable
                 score *= 0.75
                 details.append("extracted via keyword fallback on legal prose document")

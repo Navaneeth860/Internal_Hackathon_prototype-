@@ -324,7 +324,7 @@ export default function App() {
                       {record!.document_subtype || "General"} ({record!.extraction_method || "keyword"})
                     </span>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="grid grid-cols-5 gap-2 text-center">
                     <div className="flex flex-col border-r border-slate-200">
                       <span className="text-sm font-extrabold text-slate-800">{fieldsCount}</span>
                       <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Schema Fields</span>
@@ -340,6 +340,10 @@ export default function App() {
                     <div className="flex flex-col">
                       <span className="text-sm font-extrabold text-blue-600">{avgConfidence}%</span>
                       <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Avg Conf</span>
+                    </div>
+                    <div className="flex flex-col border-l border-slate-200 pl-1">
+                      <span className="text-[10px] font-extrabold text-violet-700 truncate" title={record!.detected_language || "Unknown"}>{record!.detected_language || "Unknown"}</span>
+                      <span className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Language</span>
                     </div>
                   </div>
                 </div>

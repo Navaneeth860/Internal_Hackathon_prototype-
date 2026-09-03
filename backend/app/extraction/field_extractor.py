@@ -54,7 +54,7 @@ class FieldExtractor:
                 return None
                 
         # 3. Numeric checks (e.g. survey_number should contain digits)
-        if name in ["survey_number", "khasra_number", "khata_number", "party_count"]:
+        if name in ["survey_number", "khasra_number", "khata_number", "hissa_number", "party_count"]:
             if not any(char.isdigit() for char in cleaned):
                 return None
                 
@@ -69,7 +69,9 @@ class FieldExtractor:
         elements = ocr_result.elements
         
         # Determine target fields based on document subtype
-        if subtype == "Sale Deed":
+        if subtype == "Kannada Sale Deed":
+            fields_to_extract = patterns.KANNADA_SALE_DEED_FIELD_SPECS
+        elif subtype == "Sale Deed":
             fields_to_extract = [
                 ("document_date", re.compile(r"(\b\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b|\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b)", re.I), ["date", "executed"]),
                 ("seller_name", re.compile(r"between\s+([A-Z][a-zA-Z\s]+?)(?:,|\s+resident|\s+hereinafter)", re.I), ["seller", "vendor"]),
@@ -150,11 +152,11 @@ class FieldExtractor:
         # Step 2: Check for keyword presence and use spatial layout heuristics
         for idx, element in enumerate(elements):
             text_lower = element.text.lower()
-            if any(re.search(rf"\b{kw}\b", text_lower) for kw in keywords):
+            if any(self._keyword_present(keyword, element.text) for keyword in keywords):
                 # Check the immediate next element (simple reading order heuristic)
                 if idx + 1 < len(elements):
                     next_el = elements[idx + 1]
-                    if not any(re.search(rf"\b{kw}\b", next_el.text.lower()) for kw in keywords):
+                    if not any(self._keyword_present(keyword, next_el.text) for keyword in keywords):
                         candidate_value = next_el.text.strip()
                         cleaned_cand = self._clean_extracted_value(name, candidate_value)
                         if cleaned_cand and len(cleaned_cand) < 100 and ":" not in cleaned_cand:
@@ -187,7 +189,7 @@ class FieldExtractor:
                         
         # If we found keywords but couldn't extract/validate a clean value
         for element in elements:
-            if any(re.search(rf"\b{kw}\b", element.text.lower()) for kw in keywords):
+            if any(self._keyword_present(keyword, element.text) for keyword in keywords):
                 return ExtractedField(
                     name=name,
                     value=None,
@@ -206,6 +208,12 @@ class FieldExtractor:
             source_elements=[],
             explanation="Field not present in the document."
         )
+
+    def _keyword_present(self, keyword: str, text: str) -> bool:
+        """Use word boundaries for Latin keywords, substring matching for Unicode aliases."""
+        if any(ord(char) > 127 for char in keyword):
+            return keyword in text
+        return bool(re.search(rf"\b{keyword}\b", text.lower(), re.IGNORECASE))
 
     def _is_spatially_aligned(self, bbox_label: List[Tuple[float, float]], bbox_value: List[Tuple[float, float]]) -> bool:
         """

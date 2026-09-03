@@ -1,5 +1,7 @@
-paddlepaddle>=2.6.0
-paddleocr>=2.7.3
+# The application consumes PaddleOCR v3's dict-style OCR response.  Kannada
+# recognition is provided by its ka_PP-OCRv3_mobile_rec model.
+paddlepaddle>=3.3.1,<4.0
+paddleocr>=3.7.0,<4.0
 opencv-python>=4.8.0
 pydantic>=2.0
 numpy<2.0.0

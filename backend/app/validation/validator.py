@@ -59,6 +59,13 @@ class Validator:
         survey_val = survey_field.value if survey_field else None
         owner_val = owner_field.value if owner_field else None
         village_val = village_field.value if village_field else None
+        # The prototype registry contains English-only owner/location values.
+        # Avoid presenting a transliteration mismatch as a land-record conflict.
+        if extraction_result.detected_language in ["Kannada", "Mixed Kannada + English"]:
+            if owner_val and not any(char.isascii() and char.isalpha() for char in owner_val):
+                owner_val = None
+            if village_val and not any(char.isascii() and char.isalpha() for char in village_val):
+                village_val = None
         
         if survey_val:
             registry_warnings = rules.cross_reference_mock_database(
@@ -76,7 +83,7 @@ class Validator:
             area_field.validation_warnings.extend(subdiv_warns)
             
         # 6. Sale Deed Specific Validations
-        if extraction_result.document_subtype == "Sale Deed":
+        if extraction_result.document_subtype in ["Sale Deed", "Kannada Sale Deed"]:
             seller = fields_map.get("seller_name")
             buyer = fields_map.get("buyer_name")
             doc_date = fields_map.get("document_date")
@@ -96,6 +103,10 @@ class Validator:
                     if doc_date: doc_date.validation_warnings.append(warn)
                 elif "consideration" in warn or "monetary" in warn:
                     if consideration: consideration.validation_warnings.append(warn)
+
+            hissa = fields_map.get("hissa_number")
+            if hissa and hissa.value:
+                hissa.validation_warnings.extend(rules.validate_hissa_format(hissa.value))
                     
         # 7. Partition Deed Specific Validations
         elif extraction_result.document_subtype == "Partition Deed":

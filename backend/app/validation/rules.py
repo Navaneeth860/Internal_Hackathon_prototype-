@@ -51,7 +51,7 @@ def validate_area_unit(value: str) -> List[str]:
     """
     warnings = []
     value_lower = value.lower()
-    valid_units = ["acre", "acres", "hectare", "hectares", "hec", "bigha", "bighas", "sq", "sqft", "sqm"]
+    valid_units = ["acre", "acres", "hectare", "hectares", "hec", "bigha", "bighas", "sq", "sqft", "sqm", "ಎಕರೆ", "ಹೆಕ್ಟೇರ್", "ಚದರ", "ಚ.ಅಡಿ"]
     
     # Check if any valid unit string exists in the text
     if not any(unit in value_lower for unit in valid_units):
@@ -174,6 +174,12 @@ def validate_sale_deed(
             warnings.append("Format Warning: Sale consideration lacks a valid numerical monetary amount.")
             
     return warnings
+
+def validate_hissa_format(value: str) -> List[str]:
+    """Hissa/subdivision values are normally a short numeric or alphanumeric identifier."""
+    if re.fullmatch(r"\d+[A-Za-z0-9\-/]*", value.strip()):
+        return []
+    return [f"Format Warning: Hissa number '{value}' does not match expected subdivision patterns."]
 
 def validate_partition_deed(
     parties: Optional[str],

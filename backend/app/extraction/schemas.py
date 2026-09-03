@@ -72,4 +72,8 @@ class ExtractionResult(BaseModel):
     # extraction_method tells humans and tests which extraction path was taken.
     extraction_method: str = "keyword"
 
+    # Additive document-level OCR metadata used by the existing review UI.
+    detected_language: str = "Unknown"
+    ocr_languages: List[str] = []
+
     image_url: Optional[str] = None
